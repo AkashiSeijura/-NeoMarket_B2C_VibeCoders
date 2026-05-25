@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 import uuid
 
 import httpx
 
 from src.core.config import settings
-from src.services.errors import B2BUnavailableError
+from src.services.errors import B2BRequestError, B2BUnavailableError
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,39 @@ class B2BClient:
 
         products = self._fetch_products_by_sku_ids(sku_ids)
         return _index_skus(products, sku_ids)
+
+    def fetch_catalog_products(self, params: list[tuple[str, str]]) -> dict | list:
+        return self._get_json("/api/v1/products", params=params)
+
+    def fetch_catalog_product(self, product_id: str | uuid.UUID) -> dict:
+        payload = self._get_json(f"/api/v1/products/{product_id}")
+        return payload if isinstance(payload, dict) else {}
+
+    def fetch_catalog_facets(self, params: list[tuple[str, str]]) -> dict:
+        try:
+            payload = self._get_json("/api/v1/catalog/facets", params=params)
+        except B2BRequestError as exc:
+            if exc.status_code not in {404, 405}:
+                raise
+            catalog_params = [(key, value) for key, value in params if key not in {"limit", "offset"}]
+            catalog_params.extend([("limit", "100"), ("offset", "0")])
+            catalog_payload = self._get_json("/api/v1/products", params=catalog_params)
+            return _facets_from_catalog_payload(catalog_payload, params)
+        return payload if isinstance(payload, dict) else {"facets": []}
+
+    def _get_json(self, path: str, params: list[tuple[str, str]] | None = None) -> dict | list:
+        headers = {"X-Service-Key": self.service_key}
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.get(f"{self.base_url}{path}", params=params or [], headers=headers)
+        except httpx.HTTPError as exc:
+            raise B2BUnavailableError("B2B service unavailable") from exc
+
+        if response.status_code >= 500:
+            raise B2BUnavailableError("B2B service unavailable")
+        if response.status_code >= 400:
+            raise _b2b_request_error(response)
+        return response.json()
 
     def _fetch_products_by_sku_ids(self, sku_ids: list[uuid.UUID]) -> list[dict]:
         headers = {"X-Service-Key": self.service_key}
@@ -128,6 +162,61 @@ def _first_image_url(images) -> str | None:
     return str(first)
 
 
+def _b2b_request_error(response: httpx.Response) -> B2BRequestError:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    code = payload.get("code") if isinstance(payload, dict) else None
+    message = payload.get("message") if isinstance(payload, dict) else None
+    return B2BRequestError(
+        response.status_code,
+        message or "B2B product service rejected request",
+        code or "B2B_ERROR",
+    )
+
+
+def _facets_from_catalog_payload(payload: dict | list, params: list[tuple[str, str]]) -> dict:
+    items = payload.get("items", []) if isinstance(payload, dict) else payload
+    category_id = _last_param(params, "category_id") or _last_param(params, "filter[category_id]")
+    counters: defaultdict[str, Counter[str]] = defaultdict(Counter)
+
+    for product in items if isinstance(items, list) else []:
+        if not isinstance(product, dict):
+            continue
+        for key, value in (product.get("attributes") or {}).items():
+            counters[str(key)][str(value)] += 1
+        for characteristic in product.get("characteristics") or []:
+            if isinstance(characteristic, dict) and characteristic.get("name") is not None:
+                counters[_slug(str(characteristic["name"]))][str(characteristic.get("value", ""))] += 1
+        for sku in product.get("skus") or []:
+            for characteristic in sku.get("characteristics") or []:
+                if isinstance(characteristic, dict) and characteristic.get("name") is not None:
+                    counters[_slug(str(characteristic["name"]))][str(characteristic.get("value", ""))] += 1
+
+    return {
+        "category_id": category_id,
+        "facets": [
+            {
+                "name": name,
+                "values": [
+                    {"value": value, "count": count}
+                    for value, count in sorted(counter.items())
+                ],
+            }
+            for name, counter in sorted(counters.items())
+        ],
+    }
+
+
+def _last_param(params: list[tuple[str, str]], key: str) -> str | None:
+    matches = [value for param_key, value in params if param_key == key]
+    return matches[-1] if matches else None
+
+
+def _slug(value: str) -> str:
+    return value.strip().lower().replace(" ", "_")
+
+
 def get_b2b_client() -> B2BClient:
     return B2BClient()
-

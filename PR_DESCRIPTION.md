@@ -20,3 +20,38 @@ Guest cart identity options considered: `X-Session-Id`, cookie, and temporary JW
 - `test_subtotal_excludes_unavailable_lines`: passed
 - `test_merge_requires_session_header`: passed
 - `test_cart_validate_returns_issues`: passed
+
+## US-CAT-01
+
+Implemented catalog proxy endpoints `GET /api/v1/catalog/products` and flow-compatible `GET /api/v1/products`, plus `GET /api/v1/catalog/facets`. The product endpoint accepts OpenAPI `q`, `sort`, `filter[...]` and flow-compatible `category_id` / `filters[...]`, clamps pagination to `1..100`, validates sort against the published B2C enum (`price_asc`, `price_desc`, `popularity`, `new`), and forwards requests to B2B with `X-Service-Key`. Responses are normalized to the canon/OpenAPI card shape: `name`, `images`, `min_price`, `has_stock`, and `{items,total_count,limit,offset}`.
+
+## ADR: facets
+
+Considered three options for facets: SQL `GROUP BY` on each request in B2B, cached facets with TTL, and denormalized counters in a separate table. I chose request-time calculation/proxy for MVP, with B2B as the source of truth and a B2C no-storage fallback only when the facets endpoint is not published yet. This keeps data consistency high because visibility (`MODERATED`, not deleted, positive active quantity) remains owned by B2B. The tradeoff is higher DB load for large catalogs, so TTL cache is the next step once traffic or category size justifies it.
+
+## Test evidence: US-CAT-01
+
+`python -m pytest -q`
+
+- `test_catalog_returns_filtered_sorted_products`: passed
+- `test_facets_return_counts_per_filter_value`: passed
+- `test_invalid_sort_returns_400`: passed
+- `test_b2b_unavailable_returns_502`: passed
+- `test_catalog_b2b_client_uses_service_key`: passed
+
+## US-CAT-03
+
+Implemented B2C product card endpoints `GET /api/v1/catalog/products/{product_id}` and flow-compatible `GET /api/v1/products/{product_id}`. The service requests the product from B2B, rejects hidden products with 404, normalizes images/attributes/SKU prices to the published B2C OpenAPI shape, and keeps out-of-stock SKU in the response with `available_quantity=0`. Seller-only SKU fields `cost_price` and `reserved_quantity` are not present in the response.
+
+## ADR: product card representation
+
+I considered three options: separate B2C serializer/normalizer, view-level field filtering, and a fully separate internal endpoint. I chose a separate B2C normalizer because it has the lowest accidental leak risk when B2B adds seller-only fields to its model or response. View-level filtering is shorter, but fragile: a new nested field can bypass the filter unless every path is audited. A separate endpoint would also be safe, but increases B2B/B2C contract surface and support cost; the normalizer keeps one integration point and an explicit allow-list for buyer-visible fields.
+
+## Test evidence: US-CAT-03
+
+`python -m pytest -q`
+
+- `test_product_card_returns_full_data_with_skus`: passed
+- `test_cost_price_absent_in_response`: passed
+- `test_blocked_product_returns_404`: passed
+- `test_sku_without_stock_is_shown_as_unavailable`: passed
