@@ -114,3 +114,50 @@ def test_cart_openapi_patch_delete_and_validate_by_sku(client, fake_b2b):
     assert validation.json()["issues"] == []
     assert deleted.status_code == 200
     assert deleted.json()["items"] == []
+
+
+def test_subtotal_excludes_unavailable_lines(client, fake_b2b):
+    sku_ok = uuid.uuid4()
+    sku_bad = uuid.uuid4()
+    fake_b2b.set_sku(sku_ok, unit_price=1000, active_quantity=5)
+    fake_b2b.set_sku(sku_bad, unit_price=5000, active_quantity=1)
+    headers = {"X-Session-Id": str(uuid.uuid4())}
+
+    client.post("/api/v1/cart/items", json={"sku_id": str(sku_ok), "quantity": 2}, headers=headers)
+    client.post("/api/v1/cart/items", json={"sku_id": str(sku_bad), "quantity": 1}, headers=headers)
+    fake_b2b.set_sku(sku_bad, unit_price=5000, active_quantity=0)
+
+    data = client.get("/api/v1/cart", headers=headers).json()
+    by_sku = {item["sku_id"]: item for item in data["items"]}
+
+    assert by_sku[str(sku_ok)]["line_total"] == 2000
+    assert by_sku[str(sku_bad)]["line_total"] == 0
+    assert by_sku[str(sku_bad)]["unavailable_reason"] == "OUT_OF_STOCK"
+    assert data["subtotal"] == 2000
+
+
+def test_merge_requires_session_header(client, fake_b2b):
+    user_id = uuid.uuid4()
+
+    response = client.post("/api/v1/cart/merge", headers=auth_headers(user_id))
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "MISSING_CART_IDENTITY"
+    assert "X-Session-Id" in response.json()["message"]
+
+
+def test_cart_validate_returns_issues(client, fake_b2b):
+    sku_id = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, unit_price=15000, active_quantity=1)
+    headers = {"X-Session-Id": str(uuid.uuid4())}
+
+    client.post("/api/v1/cart/items", json={"sku_id": str(sku_id), "quantity": 1}, headers=headers)
+    fake_b2b.set_sku(sku_id, unit_price=15000, active_quantity=0)
+
+    response = client.post("/api/v1/cart/validate", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["is_valid"] is False
+    assert body["cart"]["is_valid"] is False
+    assert {issue["type"] for issue in body["issues"]} == {"OUT_OF_STOCK"}
