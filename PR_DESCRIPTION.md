@@ -20,3 +20,21 @@ Guest cart identity options considered: `X-Session-Id`, cookie, and temporary JW
 - `test_subtotal_excludes_unavailable_lines`: passed
 - `test_merge_requires_session_header`: passed
 - `test_cart_validate_returns_issues`: passed
+
+## US-CAT-01
+
+Implemented catalog proxy endpoints `GET /api/v1/catalog/products` and flow-compatible `GET /api/v1/products`, plus `GET /api/v1/catalog/facets`. The product endpoint accepts OpenAPI `q`, `sort`, `filter[...]` and flow-compatible `category_id` / `filters[...]`, clamps pagination to `1..100`, validates sort against the published B2C enum (`price_asc`, `price_desc`, `popularity`, `new`), and forwards requests to B2B with `X-Service-Key`. Responses are normalized to the canon/OpenAPI card shape: `name`, `images`, `min_price`, `has_stock`, and `{items,total_count,limit,offset}`.
+
+## ADR: facets
+
+Considered three options for facets: SQL `GROUP BY` on each request in B2B, cached facets with TTL, and denormalized counters in a separate table. I chose request-time calculation/proxy for MVP, with B2B as the source of truth and a B2C no-storage fallback only when the facets endpoint is not published yet. This keeps data consistency high because visibility (`MODERATED`, not deleted, positive active quantity) remains owned by B2B. The tradeoff is higher DB load for large catalogs, so TTL cache is the next step once traffic or category size justifies it.
+
+## Test evidence: US-CAT-01
+
+`python -m pytest -q`
+
+- `test_catalog_returns_filtered_sorted_products`: passed
+- `test_facets_return_counts_per_filter_value`: passed
+- `test_invalid_sort_returns_400`: passed
+- `test_b2b_unavailable_returns_502`: passed
+- `test_catalog_b2b_client_uses_service_key`: passed

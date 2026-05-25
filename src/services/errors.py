@@ -45,6 +45,20 @@ class InvalidQuantityError(ServiceError):
     code = "INVALID_QUANTITY"
 
 
+class InvalidSortError(ServiceError):
+    status_code = 400
+    code = "INVALID_SORT"
+
+
 class B2BUnavailableError(ServiceError):
     status_code = 503
     code = "SERVICE_UNAVAILABLE"
+
+
+class B2BRequestError(ServiceError):
+    code = "B2B_ERROR"
+
+    def __init__(self, status_code: int, message: str | None = None, code: str | None = None):
+        self.status_code = status_code
+        self.code = code or self.code
+        super().__init__(message)
