@@ -35,6 +35,23 @@ class CatalogProductCard(BaseModel):
     seller: dict | None = None
 
 
+class CatalogSku(BaseModel):
+    id: uuid.UUID | str
+    price: int
+    available_quantity: int
+    name: str | None = None
+    sku_code: str | None = None
+    old_price: int | None = None
+    attributes: dict | None = None
+    images: list[ImageRef] = []
+
+
+class CatalogProductDetail(CatalogProductCard):
+    description: str
+    attributes: dict | None = None
+    skus: list[CatalogSku]
+
+
 class PaginatedCatalogProducts(BaseModel):
     items: list[CatalogProductCard]
     total_count: int

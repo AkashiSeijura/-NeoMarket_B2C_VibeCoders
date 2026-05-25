@@ -152,3 +152,99 @@ def test_catalog_b2b_client_uses_service_key(monkeypatch):
     assert captured["url"] == "http://b2b:8000/api/v1/products"
     assert captured["params"] == [("q", "phone")]
     assert captured["headers"]["X-Service-Key"] == "secret-key"
+
+
+def _product_detail_payload(product_id: uuid.UUID | None = None) -> dict:
+    return {
+        "id": str(product_id or uuid.uuid4()),
+        "slug": "phone-pro",
+        "title": "Phone Pro",
+        "description": "Flagship phone",
+        "status": "MODERATED",
+        "deleted": False,
+        "category_id": str(uuid.uuid4()),
+        "images": [{"id": str(uuid.uuid4()), "url": "https://cdn.example.test/front.jpg", "ordering": 0}],
+        "characteristics": [{"name": "Brand", "value": "Neo"}],
+        "skus": [
+            {
+                "id": str(uuid.uuid4()),
+                "name": "128 GB Black",
+                "article": "BLK-128",
+                "price": 120000,
+                "discount": 0,
+                "active_quantity": 3,
+                "cost_price": 80000,
+                "reserved_quantity": 1,
+                "characteristics": [{"name": "Color", "value": "Black"}],
+                "image": "https://cdn.example.test/black.jpg",
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "name": "256 GB White",
+                "article": "WHT-256",
+                "price": 150000,
+                "discount": 10000,
+                "active_quantity": 0,
+                "cost_price": 90000,
+                "reserved_quantity": 0,
+            },
+        ],
+    }
+
+
+def test_product_card_returns_full_data_with_skus(client, fake_b2b):
+    product_id = uuid.uuid4()
+    fake_b2b.catalog_product = _product_detail_payload(product_id)
+
+    response = client.get(f"/api/v1/catalog/products/{product_id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == str(product_id)
+    assert payload["name"] == "Phone Pro"
+    assert payload["description"] == "Flagship phone"
+    assert payload["images"]
+    assert payload["attributes"]["Brand"] == "Neo"
+    assert payload["min_price"] == 120000
+    assert payload["has_stock"] is True
+    assert len(payload["skus"]) == 2
+    assert payload["skus"][0]["price"] == 120000
+    assert payload["skus"][0]["available_quantity"] == 3
+    assert payload["skus"][1]["price"] == 140000
+    assert payload["skus"][1]["old_price"] == 150000
+    assert payload["skus"][1]["available_quantity"] == 0
+
+
+def test_cost_price_absent_in_response(client, fake_b2b):
+    product_id = uuid.uuid4()
+    fake_b2b.catalog_product = _product_detail_payload(product_id)
+
+    response = client.get(f"/api/v1/catalog/products/{product_id}")
+
+    assert response.status_code == 200
+    for sku in response.json()["skus"]:
+        assert "cost_price" not in sku
+        assert "reserved_quantity" not in sku
+
+
+def test_blocked_product_returns_404(client, fake_b2b):
+    product_id = uuid.uuid4()
+    payload = _product_detail_payload(product_id)
+    payload["status"] = "BLOCKED"
+    fake_b2b.catalog_product = payload
+
+    response = client.get(f"/api/v1/catalog/products/{product_id}")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "NOT_FOUND"
+
+
+def test_sku_without_stock_is_shown_as_unavailable(client, fake_b2b):
+    product_id = uuid.uuid4()
+    fake_b2b.catalog_product = _product_detail_payload(product_id)
+
+    response = client.get(f"/api/v1/products/{product_id}")
+
+    assert response.status_code == 200
+    out_of_stock_sku = response.json()["skus"][1]
+    assert out_of_stock_sku["available_quantity"] == 0

@@ -38,3 +38,20 @@ Considered three options for facets: SQL `GROUP BY` on each request in B2B, cach
 - `test_invalid_sort_returns_400`: passed
 - `test_b2b_unavailable_returns_502`: passed
 - `test_catalog_b2b_client_uses_service_key`: passed
+
+## US-CAT-03
+
+Implemented B2C product card endpoints `GET /api/v1/catalog/products/{product_id}` and flow-compatible `GET /api/v1/products/{product_id}`. The service requests the product from B2B, rejects hidden products with 404, normalizes images/attributes/SKU prices to the published B2C OpenAPI shape, and keeps out-of-stock SKU in the response with `available_quantity=0`. Seller-only SKU fields `cost_price` and `reserved_quantity` are not present in the response.
+
+## ADR: product card representation
+
+I considered three options: separate B2C serializer/normalizer, view-level field filtering, and a fully separate internal endpoint. I chose a separate B2C normalizer because it has the lowest accidental leak risk when B2B adds seller-only fields to its model or response. View-level filtering is shorter, but fragile: a new nested field can bypass the filter unless every path is audited. A separate endpoint would also be safe, but increases B2B/B2C contract surface and support cost; the normalizer keeps one integration point and an explicit allow-list for buyer-visible fields.
+
+## Test evidence: US-CAT-03
+
+`python -m pytest -q`
+
+- `test_product_card_returns_full_data_with_skus`: passed
+- `test_cost_price_absent_in_response`: passed
+- `test_blocked_product_returns_404`: passed
+- `test_sku_without_stock_is_shown_as_unavailable`: passed

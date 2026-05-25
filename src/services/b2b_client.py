@@ -44,6 +44,10 @@ class B2BClient:
     def fetch_catalog_products(self, params: list[tuple[str, str]]) -> dict | list:
         return self._get_json("/api/v1/products", params=params)
 
+    def fetch_catalog_product(self, product_id: str | uuid.UUID) -> dict:
+        payload = self._get_json(f"/api/v1/products/{product_id}")
+        return payload if isinstance(payload, dict) else {}
+
     def fetch_catalog_facets(self, params: list[tuple[str, str]]) -> dict:
         try:
             payload = self._get_json("/api/v1/catalog/facets", params=params)

@@ -4,9 +4,9 @@ from collections.abc import Iterable
 
 from starlette.datastructures import QueryParams
 
-from src.schemas.catalog import CatalogFacetsResponse, PaginatedCatalogProducts
+from src.schemas.catalog import CatalogFacetsResponse, CatalogProductDetail, PaginatedCatalogProducts
 from src.services.b2b_client import B2BClient
-from src.services.errors import InvalidSortError
+from src.services.errors import InvalidSortError, NotFoundError
 
 
 ALLOWED_SORTS = ("price_asc", "price_desc", "popularity", "new")
@@ -51,6 +51,13 @@ def get_catalog_facets(
     if "category_id" not in payload and category_id is not None:
         payload = {**payload, "category_id": category_id}
     return CatalogFacetsResponse.model_validate(payload)
+
+
+def get_catalog_product_detail(b2b_client: B2BClient, product_id: str) -> CatalogProductDetail:
+    payload = b2b_client.fetch_catalog_product(product_id)
+    if _is_hidden_product(payload):
+        raise NotFoundError("Product not found")
+    return CatalogProductDetail.model_validate(_normalize_product_detail(payload))
 
 
 def _validate_sort(sort: str) -> None:
@@ -148,6 +155,83 @@ def _normalize_catalog_item(item: dict) -> dict:
         "images": _normalize_images(images),
         "seller": item.get("seller"),
     }
+
+
+def _normalize_product_detail(product: dict) -> dict:
+    skus = [_normalize_sku(sku) for sku in product.get("skus") or []]
+    card = _normalize_catalog_item(product)
+    min_price, old_price, has_stock = _aggregate_skus(skus, card["min_price"], card["has_stock"])
+    card["min_price"] = min_price
+    card["has_stock"] = has_stock
+    if old_price is not None:
+        card["old_price"] = old_price
+    elif "old_price" in card:
+        card.pop("old_price")
+    card.update(
+        {
+            "description": product.get("description") or "",
+            "attributes": _attributes(product.get("attributes"), product.get("characteristics")),
+            "skus": skus,
+        }
+    )
+    return card
+
+
+def _normalize_sku(sku: dict) -> dict:
+    price = int(sku.get("price_cents", sku.get("price", 0)) or 0)
+    discount = _non_negative_int(sku.get("discount", 0))
+    current_price = max(0, price - discount) if discount > 0 else price
+    available_quantity = _non_negative_int(
+        sku.get("available_quantity", sku.get("active_quantity", sku.get("quantity", 0)))
+    )
+    payload = {
+        "id": sku.get("id"),
+        "name": sku.get("name"),
+        "sku_code": sku.get("sku_code") or sku.get("article"),
+        "price": current_price,
+        "available_quantity": available_quantity,
+        "attributes": _attributes(sku.get("attributes"), sku.get("characteristics")),
+        "images": _normalize_images(sku.get("images") or ([sku["image"]] if sku.get("image") else [])),
+    }
+    if discount > 0:
+        payload["old_price"] = price
+    return payload
+
+
+def _aggregate_skus(skus: list[dict], fallback_price: int, fallback_stock: bool) -> tuple[int, int | None, bool]:
+    if not skus:
+        return fallback_price, None, fallback_stock
+
+    available = [sku for sku in skus if sku["available_quantity"] > 0]
+    pool = available or skus
+    min_sku = min(pool, key=lambda sku: sku["price"])
+    return min_sku["price"], min_sku.get("old_price"), bool(available)
+
+
+def _attributes(raw_attributes, characteristics) -> dict:
+    if isinstance(raw_attributes, dict):
+        return dict(raw_attributes)
+    result = {}
+    for row in characteristics or []:
+        if isinstance(row, dict) and row.get("name") is not None:
+            result[str(row["name"])] = row.get("value")
+    return result
+
+
+def _is_hidden_product(product: dict) -> bool:
+    return (
+        not product
+        or product.get("status") != "MODERATED"
+        or bool(product.get("deleted", product.get("is_deleted", False)))
+        or bool(product.get("blocked", product.get("is_blocked", False)))
+    )
+
+
+def _non_negative_int(value) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _normalize_images(images: list[dict | str] | None) -> list[dict]:

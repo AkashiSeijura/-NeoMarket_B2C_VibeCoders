@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from src.schemas.catalog import CatalogFacetsResponse, PaginatedCatalogProducts
+from src.schemas.catalog import CatalogFacetsResponse, CatalogProductDetail, PaginatedCatalogProducts
 from src.services.b2b_client import B2BClient, get_b2b_client
-from src.services.catalog_service import get_catalog_facets, list_catalog_products
+from src.services.catalog_service import get_catalog_facets, get_catalog_product_detail, list_catalog_products
 
 router = APIRouter(tags=["Catalog"])
 
@@ -53,6 +53,15 @@ def list_products_endpoint(
         q=q,
         search=search,
     )
+
+
+@router.get("/api/v1/catalog/products/{product_id}", response_model=CatalogProductDetail)
+@router.get("/api/v1/products/{product_id}", response_model=CatalogProductDetail, include_in_schema=False)
+def product_detail_endpoint(
+    product_id: str,
+    b2b_client: B2BClient = Depends(get_b2b_client),
+) -> CatalogProductDetail:
+    return get_catalog_product_detail(b2b_client, product_id)
 
 
 @router.get("/api/v1/catalog/facets", response_model=CatalogFacetsResponse)

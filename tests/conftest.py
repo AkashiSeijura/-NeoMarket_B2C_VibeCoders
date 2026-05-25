@@ -22,6 +22,7 @@ class FakeB2BClient:
     def __init__(self):
         self.skus: dict[uuid.UUID, B2BSku] = {}
         self.catalog_products: list[dict] = []
+        self.catalog_product: dict | None = None
         self.fail_catalog = False
         self.catalog_calls: list[list[tuple[str, str]]] = []
 
@@ -100,6 +101,20 @@ class FakeB2BClient:
             "limit": limit,
             "offset": offset,
         }
+
+    def fetch_catalog_product(self, product_id: str) -> dict:
+        if self.fail_catalog:
+            from src.services.errors import B2BUnavailableError
+
+            raise B2BUnavailableError("B2B service unavailable")
+        if self.catalog_product is not None:
+            return self.catalog_product
+        for product in self.catalog_products:
+            if str(product.get("id")) == str(product_id):
+                return product
+        from src.services.errors import NotFoundError
+
+        raise NotFoundError("Product not found")
 
     def fetch_catalog_facets(self, params: list[tuple[str, str]]) -> dict:
         if self.fail_catalog:
