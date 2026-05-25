@@ -22,7 +22,7 @@ def get_cart_identity(
         return CartIdentity(user_id=user_id)
 
     if x_session_id:
-        return CartIdentity(session_id=x_session_id)
+        return CartIdentity(session_id=str(_parse_uuid(x_session_id)))
 
     raise MissingCartIdentityError("Pass Authorization, X-User-Id, or X-Session-Id")
 
@@ -42,7 +42,7 @@ def get_required_user_id(
 def get_required_session_id(x_session_id: str | None = Header(default=None, alias="X-Session-Id")) -> str:
     if not x_session_id:
         raise MissingCartIdentityError("Pass X-Session-Id")
-    return x_session_id
+    return str(_parse_uuid(x_session_id))
 
 
 def _user_id_from_authorization(authorization: str | None) -> uuid.UUID | None:
@@ -88,4 +88,3 @@ def _try_uuid(value) -> uuid.UUID | None:
         return uuid.UUID(str(value))
     except (TypeError, ValueError):
         return None
-

@@ -31,12 +31,12 @@ class SkuNotFoundError(NotFoundError):
 
 
 class SkuNotAvailableError(ServiceError):
-    status_code = 410
+    status_code = 404
     code = "SKU_NOT_AVAILABLE"
 
 
 class InsufficientStockError(ServiceError):
-    status_code = 422
+    status_code = 409
     code = "INSUFFICIENT_STOCK"
 
 
@@ -48,4 +48,3 @@ class InvalidQuantityError(ServiceError):
 class B2BUnavailableError(ServiceError):
     status_code = 503
     code = "SERVICE_UNAVAILABLE"
-

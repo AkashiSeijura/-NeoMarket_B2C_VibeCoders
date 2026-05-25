@@ -12,6 +12,7 @@ from src.schemas.cart import (
     CartItemRead,
     CartMutationResponse,
     CartResponse,
+    CartValidationResponse,
     UpdateCartItemRequest,
 )
 from src.services.b2b_client import B2BClient, get_b2b_client
@@ -19,11 +20,13 @@ from src.services.cart_service import (
     CartIdentity,
     add_item,
     clear_cart,
-    delete_item,
+    delete_item_by_sku,
     get_cart,
     get_cart_item,
     merge_guest_cart,
     update_item,
+    update_item_by_sku,
+    validate_cart,
 )
 
 router = APIRouter(prefix="/api/v1/cart", tags=["Cart"])
@@ -47,14 +50,14 @@ def clear_cart_endpoint(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/items", response_model=CartMutationResponse)
+@router.post("/items", response_model=CartResponse)
 def add_cart_item_endpoint(
     payload: AddCartItemRequest,
     response: Response,
     identity: CartIdentity = Depends(get_cart_identity),
     db: Session = Depends(get_db),
     b2b_client: B2BClient = Depends(get_b2b_client),
-) -> CartMutationResponse:
+) -> CartResponse:
     result, status_code = add_item(db, identity, payload.sku_id, payload.quantity, b2b_client)
     response.status_code = status_code
     return result
@@ -81,14 +84,34 @@ def update_cart_item_endpoint(
     return update_item(db, identity, item_id, payload.quantity, b2b_client)
 
 
-@router.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_cart_item_endpoint(
-    item_id: uuid.UUID,
+@router.patch("/items/{sku_id}", response_model=CartResponse)
+def patch_cart_item_endpoint(
+    sku_id: uuid.UUID,
+    payload: UpdateCartItemRequest,
     identity: CartIdentity = Depends(get_cart_identity),
     db: Session = Depends(get_db),
-) -> Response:
-    delete_item(db, identity, item_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    b2b_client: B2BClient = Depends(get_b2b_client),
+) -> CartResponse:
+    return update_item_by_sku(db, identity, sku_id, payload.quantity, b2b_client)
+
+
+@router.delete("/items/{sku_id}", response_model=CartResponse)
+def delete_cart_item_endpoint(
+    sku_id: uuid.UUID,
+    identity: CartIdentity = Depends(get_cart_identity),
+    db: Session = Depends(get_db),
+    b2b_client: B2BClient = Depends(get_b2b_client),
+) -> CartResponse:
+    return delete_item_by_sku(db, identity, sku_id, b2b_client)
+
+
+@router.post("/validate", response_model=CartValidationResponse)
+def validate_cart_endpoint(
+    identity: CartIdentity = Depends(get_cart_identity),
+    db: Session = Depends(get_db),
+    b2b_client: B2BClient = Depends(get_b2b_client),
+) -> CartValidationResponse:
+    return validate_cart(db, identity, b2b_client)
 
 
 @router.post("/merge", response_model=CartResponse)

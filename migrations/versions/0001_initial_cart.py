@@ -34,6 +34,8 @@ def upgrade() -> None:
             name="ck_cart_items_identity_present",
         ),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "sku_id", name="uq_cart_items_user_sku"),
+        sa.UniqueConstraint("session_id", "sku_id", name="uq_cart_items_session_sku"),
     )
     op.create_index("ix_cart_items_user_id", "cart_items", ["user_id"])
     op.create_index("ix_cart_items_session_id", "cart_items", ["session_id"])
@@ -45,4 +47,3 @@ def downgrade() -> None:
     op.drop_index("ix_cart_items_session_id", table_name="cart_items")
     op.drop_index("ix_cart_items_user_id", table_name="cart_items")
     op.drop_table("cart_items")
-
