@@ -17,3 +17,6 @@ Guest cart identity options considered: `X-Session-Id`, cookie, and temporary JW
 - `test_unavailable_sku_shown_with_reason`: passed
 - `test_guest_cart_merged_on_login`: passed
 - `test_cart_openapi_patch_delete_and_validate_by_sku`: passed
+- `test_subtotal_excludes_unavailable_lines`: passed
+- `test_merge_requires_session_header`: passed
+- `test_cart_validate_returns_issues`: passed
