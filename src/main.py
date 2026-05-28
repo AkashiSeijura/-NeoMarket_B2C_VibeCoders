@@ -23,7 +23,7 @@ def healthcheck() -> dict[str, str]:
 async def service_error_handler(_, exc: ServiceError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
-        content={"code": exc.code, "message": exc.message},
+        content=exc.to_dict(),
     )
 
 
@@ -37,4 +37,3 @@ async def request_validation_exception_handler(_, exc: RequestValidationError) -
         status_code=422,
         content={"code": "VALIDATION_ERROR", "message": f"{field}: {message}"},
     )
-

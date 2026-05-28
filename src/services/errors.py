@@ -6,6 +6,9 @@ class ServiceError(Exception):
         self.message = message or self.code
         super().__init__(self.message)
 
+    def to_dict(self) -> dict:
+        return {"code": self.code, "message": self.message}
+
 
 class MissingCartIdentityError(ServiceError):
     status_code = 400
@@ -55,6 +58,10 @@ class B2BUnavailableError(ServiceError):
     code = "SERVICE_UNAVAILABLE"
 
 
+class B2BCheckoutUnavailableError(B2BUnavailableError):
+    code = "B2B_UNAVAILABLE"
+
+
 class B2BRequestError(ServiceError):
     code = "B2B_ERROR"
 
@@ -62,3 +69,25 @@ class B2BRequestError(ServiceError):
         self.status_code = status_code
         self.code = code or self.code
         super().__init__(message)
+
+
+class IdempotencyConflictError(ServiceError):
+    status_code = 409
+    code = "IDEMPOTENCY_CONFLICT"
+
+
+class EmptyOrderError(ServiceError):
+    status_code = 400
+    code = "INVALID_REQUEST"
+
+
+class ReserveFailedError(ServiceError):
+    status_code = 409
+    code = "RESERVE_FAILED"
+
+    def __init__(self, message: str | None = None, failed_items: list[dict] | None = None):
+        self.failed_items = failed_items or []
+        super().__init__(message or "Failed to reserve order items")
+
+    def to_dict(self) -> dict:
+        return {**super().to_dict(), "failed_items": self.failed_items}

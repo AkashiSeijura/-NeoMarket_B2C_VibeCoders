@@ -55,3 +55,20 @@ I considered three options: separate B2C serializer/normalizer, view-level field
 - `test_cost_price_absent_in_response`: passed
 - `test_blocked_product_returns_404`: passed
 - `test_sku_without_stock_is_shown_as_unavailable`: passed
+
+## US-ORD-01
+
+Implemented `POST /api/v1/orders` checkout with idempotency, all-or-nothing B2B reserve, and historical `OrderItem` snapshots (`unit_price`, `product_title`, `sku_name`). The route follows the published B2C OpenAPI by accepting `Idempotency-Key` header and also accepts the canonical flow body fields (`idempotency_key`, `items`, `delivery_address`) for compatibility. Successful checkout creates a `PAID` order; reserve failures return `409 RESERVE_FAILED` with `failed_items`; B2B downtime returns `503 B2B_UNAVAILABLE`.
+
+## ADR: checkout idempotency
+
+I considered three storage options: a unique index on `orders.idempotency_key`, a separate idempotency-key table/cache, and Redis. I chose the unique DB index on `orders.idempotency_key` plus a stored request hash because it is the simplest durable option in this service and handles duplicate inserts under race conditions at the database boundary. Redis is fast but adds operational state and persistence questions; a separate table is more flexible for pending/in-progress states, but adds extra write paths that are not needed for this MVP. B2B reserve is called with the same idempotency key, so concurrent duplicate checkout attempts do not create duplicate orders and should not double-reserve on the B2B side.
+
+## Test evidence: US-ORD-01
+
+`python -m pytest -q`
+
+- `test_checkout_creates_paid_order_with_fixed_prices`: passed
+- `test_partial_reserve_failure_returns_409`: passed
+- `test_idempotency_returns_existing_order`: passed
+- `test_b2b_unavailable_returns_503`: passed
