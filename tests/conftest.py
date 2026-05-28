@@ -25,8 +25,10 @@ class FakeB2BClient:
         self.catalog_product: dict | None = None
         self.fail_catalog = False
         self.fail_reserve_unavailable = False
+        self.fail_unreserve_unavailable = False
         self.reserve_failed_items: list[dict] = []
         self.reserve_calls: list[dict] = []
+        self.unreserve_calls: list[dict] = []
         self.catalog_calls: list[list[tuple[str, str]]] = []
 
     def set_sku(
@@ -70,6 +72,13 @@ class FakeB2BClient:
             from src.services.errors import ReserveFailedError
 
             raise ReserveFailedError(failed_items=self.reserve_failed_items)
+
+    def unreserve(self, order_id: uuid.UUID, items: list[dict]) -> None:
+        self.unreserve_calls.append({"order_id": order_id, "items": items})
+        if self.fail_unreserve_unavailable:
+            from src.services.errors import B2BUnavailableError
+
+            raise B2BUnavailableError("B2B service unavailable")
 
     def fetch_catalog_products(self, params: list[tuple[str, str]]) -> dict:
         if self.fail_catalog:

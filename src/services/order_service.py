@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 
 from sqlalchemy import select
@@ -22,10 +23,16 @@ from src.services.b2b_client import B2BClient, B2BSku
 from src.services.errors import (
     B2BCheckoutUnavailableError,
     B2BUnavailableError,
+    CancelNotAllowedError,
     EmptyOrderError,
     IdempotencyConflictError,
+    OrderNotFoundError,
     ReserveFailedError,
 )
+
+logger = logging.getLogger(__name__)
+
+ORDER_CANCELLABLE_STATUSES = {"CREATED", "PAID"}
 
 
 def checkout(
@@ -67,6 +74,70 @@ def checkout(
 
     db.refresh(order)
     return _to_response(order)
+
+
+def cancel_order(
+    db: Session,
+    buyer_id: uuid.UUID,
+    order_id: uuid.UUID,
+    b2b_client: B2BClient,
+) -> OrderResponse:
+    order = _get_user_order(db, buyer_id, order_id)
+    if order is None:
+        raise OrderNotFoundError("Order not found")
+    if order.status not in ORDER_CANCELLABLE_STATUSES:
+        raise CancelNotAllowedError(order.status)
+
+    try:
+        _unreserve_order(order, b2b_client)
+    except B2BUnavailableError:
+        logger.exception("B2B unreserve failed for order %s; marking cancellation as pending", order.id)
+        order.status = "CANCEL_PENDING"
+    else:
+        order.status = "CANCELLED"
+
+    db.commit()
+    db.refresh(order)
+    return _to_response(order)
+
+
+def retry_pending_cancellations(db: Session, b2b_client: B2BClient) -> int:
+    orders = list(
+        db.scalars(
+            select(Order)
+            .options(selectinload(Order.items))
+            .where(Order.status == "CANCEL_PENDING")
+            .order_by(Order.updated_at, Order.id)
+        )
+    )
+    cancelled_count = 0
+    for order in orders:
+        try:
+            _unreserve_order(order, b2b_client)
+        except B2BUnavailableError:
+            logger.exception("B2B unreserve retry failed for order %s", order.id)
+            continue
+        order.status = "CANCELLED"
+        cancelled_count += 1
+
+    if cancelled_count:
+        db.commit()
+    return cancelled_count
+
+
+def _get_user_order(db: Session, buyer_id: uuid.UUID, order_id: uuid.UUID) -> Order | None:
+    return db.scalars(
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(Order.id == order_id, Order.buyer_id == buyer_id)
+    ).first()
+
+
+def _unreserve_order(order: Order, b2b_client: B2BClient) -> None:
+    b2b_client.unreserve(
+        order.id,
+        [{"sku_id": str(item.sku_id), "quantity": item.quantity} for item in order.items],
+    )
 
 
 def _requested_items(db: Session, buyer_id: uuid.UUID, payload: OrderCreateRequest) -> list[OrderRequestItem]:

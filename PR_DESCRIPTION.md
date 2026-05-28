@@ -72,3 +72,22 @@ I considered three storage options: a unique index on `orders.idempotency_key`, 
 - `test_partial_reserve_failure_returns_409`: passed
 - `test_idempotency_returns_existing_order`: passed
 - `test_b2b_unavailable_returns_503`: passed
+
+## US-ORD-03
+
+Implemented `POST /api/v1/orders/{order_id}/cancel`. The route checks ownership through the authenticated buyer, returns `404 ORDER_NOT_FOUND` for another user's order, allows cancellation only from `CREATED` and `PAID`, calls B2B `POST /api/v1/unreserve`, and moves the order to `CANCELLED` on success or `CANCEL_PENDING` when B2B unreserve is unavailable.
+
+Contract check: flow `b2c-orders-flows.md#b2c-11-cancel-order` requires `CREATED/PAID -> CANCELLED` on successful unreserve and `CREATED/PAID -> CANCEL_PENDING` on timeout/5xx. Published B2C OpenAPI contains `POST /api/v1/orders/{order_id}/cancel`, returns `OrderResponse`, includes `CANCEL_PENDING` in the order status enum, and defines `409` for disallowed status. Its prose also mentions `ASSEMBLING` as cancellable, but the canonical flow and task DoD require `ASSEMBLING -> 409 CANCEL_NOT_ALLOWED`, so the implementation follows the executable acceptance criteria.
+
+## ADR: cancel retry
+
+I considered three retry options: Celery task with exponential backoff, a management command run by cron, and Django Q. I chose a DB-backed service scaffold (`retry_pending_cancellations`) that can be wired to cron first, because it has the lowest environment setup cost and survives service restarts through persisted `CANCEL_PENDING` rows. Celery gives stronger scheduling/backoff semantics, but requires broker/runtime setup that this repo does not have yet. Django Q has similar operational overhead and is less aligned with the current FastAPI/SQLAlchemy stack.
+
+## Test evidence: US-ORD-03
+
+`python -m pytest -q`
+
+- `test_cancel_paid_order_transitions_to_cancelled`: passed
+- `test_unreserve_failure_transitions_to_cancel_pending`: passed
+- `test_cancel_assembling_order_returns_409`: passed
+- `test_other_user_order_returns_404`: passed

@@ -113,3 +113,91 @@ def test_b2b_unavailable_returns_503(client, fake_b2b):
 
     assert response.status_code == 503
     assert response.json()["code"] == "B2B_UNAVAILABLE"
+
+
+def test_cancel_paid_order_transitions_to_cancelled(client, fake_b2b, db_session):
+    user_id = uuid.uuid4()
+    sku_id = uuid.uuid4()
+    idempotency_key = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+    created = client.post(
+        "/api/v1/orders",
+        json=_order_payload(idempotency_key, sku_id, quantity=1),
+        headers=auth_headers(user_id),
+    )
+
+    response = client.post(f"/api/v1/orders/{created.json()['id']}/cancel", headers=auth_headers(user_id))
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+    order = db_session.get(Order, uuid.UUID(created.json()["id"]))
+    assert order.status == "CANCELLED"
+    assert fake_b2b.unreserve_calls == [
+        {
+            "order_id": order.id,
+            "items": [{"sku_id": str(sku_id), "quantity": 1}],
+        }
+    ]
+
+
+def test_unreserve_failure_transitions_to_cancel_pending(client, fake_b2b, db_session):
+    user_id = uuid.uuid4()
+    sku_id = uuid.uuid4()
+    idempotency_key = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+    created = client.post(
+        "/api/v1/orders",
+        json=_order_payload(idempotency_key, sku_id, quantity=1),
+        headers=auth_headers(user_id),
+    )
+    fake_b2b.fail_unreserve_unavailable = True
+
+    response = client.post(f"/api/v1/orders/{created.json()['id']}/cancel", headers=auth_headers(user_id))
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCEL_PENDING"
+    order = db_session.get(Order, uuid.UUID(created.json()["id"]))
+    assert order.status == "CANCEL_PENDING"
+
+
+def test_cancel_assembling_order_returns_409(client, fake_b2b, db_session):
+    user_id = uuid.uuid4()
+    sku_id = uuid.uuid4()
+    idempotency_key = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+    created = client.post(
+        "/api/v1/orders",
+        json=_order_payload(idempotency_key, sku_id, quantity=1),
+        headers=auth_headers(user_id),
+    )
+    order = db_session.get(Order, uuid.UUID(created.json()["id"]))
+    order.status = "ASSEMBLING"
+    db_session.commit()
+
+    response = client.post(f"/api/v1/orders/{order.id}/cancel", headers=auth_headers(user_id))
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "CANCEL_NOT_ALLOWED"
+    assert response.json()["current_status"] == "ASSEMBLING"
+    db_session.refresh(order)
+    assert order.status == "ASSEMBLING"
+    assert fake_b2b.unreserve_calls == []
+
+
+def test_other_user_order_returns_404(client, fake_b2b):
+    owner_id = uuid.uuid4()
+    other_id = uuid.uuid4()
+    sku_id = uuid.uuid4()
+    idempotency_key = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+    created = client.post(
+        "/api/v1/orders",
+        json=_order_payload(idempotency_key, sku_id, quantity=1),
+        headers=auth_headers(owner_id),
+    )
+
+    response = client.post(f"/api/v1/orders/{created.json()['id']}/cancel", headers=auth_headers(other_id))
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "ORDER_NOT_FOUND"
+    assert fake_b2b.unreserve_calls == []

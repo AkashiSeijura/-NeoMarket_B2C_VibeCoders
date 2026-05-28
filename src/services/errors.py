@@ -25,6 +25,10 @@ class NotFoundError(ServiceError):
     code = "NOT_FOUND"
 
 
+class OrderNotFoundError(NotFoundError):
+    code = "ORDER_NOT_FOUND"
+
+
 class CartItemNotFoundError(NotFoundError):
     code = "CART_ITEM_NOT_FOUND"
 
@@ -91,3 +95,15 @@ class ReserveFailedError(ServiceError):
 
     def to_dict(self) -> dict:
         return {**super().to_dict(), "failed_items": self.failed_items}
+
+
+class CancelNotAllowedError(ServiceError):
+    status_code = 409
+    code = "CANCEL_NOT_ALLOWED"
+
+    def __init__(self, current_status: str):
+        self.current_status = current_status
+        super().__init__(f"Cancellation is not allowed for order in status {current_status}")
+
+    def to_dict(self) -> dict:
+        return {**super().to_dict(), "current_status": self.current_status}
