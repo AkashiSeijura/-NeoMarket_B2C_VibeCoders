@@ -93,13 +93,14 @@ class FakeB2BClient:
         if category_id:
             products = [item for item in products if item.get("category_id") == category_id]
 
-        query = params_map.get("q")
+        query = params_map.get("q") or params_map.get("search")
         if query:
             lowered = query.lower()
             products = [
                 item
                 for item in products
                 if lowered in (item.get("name") or item.get("title") or "").lower()
+                or lowered in (item.get("description") or "").lower()
             ]
 
         for key, value in params:

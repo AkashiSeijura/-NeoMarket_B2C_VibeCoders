@@ -6,7 +6,7 @@ from starlette.datastructures import QueryParams
 
 from src.schemas.catalog import CatalogFacetsResponse, CatalogProductDetail, PaginatedCatalogProducts
 from src.services.b2b_client import B2BClient
-from src.services.errors import InvalidSortError, NotFoundError
+from src.services.errors import InvalidSearchQueryError, InvalidSortError, NotFoundError
 
 
 ALLOWED_SORTS = ("price_asc", "price_desc", "popularity", "new")
@@ -27,14 +27,16 @@ def list_catalog_products(
     normalized_offset = max(offset, 0)
     normalized_sort = sort or DEFAULT_SORT
     _validate_sort(normalized_sort)
-    normalized_q = q if q is not None else search
+    normalized_query = _normalize_search_query(q if q is not None else search)
+    search_param_name = "q" if q is not None else "search"
 
     params = _catalog_query_params(
         query_params.multi_items(),
         limit=normalized_limit,
         offset=normalized_offset,
         sort=normalized_sort,
-        q=normalized_q,
+        search_name=search_param_name,
+        search_value=normalized_query,
     )
     payload = b2b_client.fetch_catalog_products(params)
     return PaginatedCatalogProducts.model_validate(_normalize_catalog_page(payload, normalized_limit, normalized_offset))
@@ -65,13 +67,26 @@ def _validate_sort(sort: str) -> None:
         raise InvalidSortError(f"Invalid sort parameter. Allowed values: {', '.join(ALLOWED_SORTS)}")
 
 
+def _normalize_search_query(query: str | None) -> str | None:
+    if query is None:
+        return None
+
+    normalized = query.strip()
+    if len(normalized) < 3:
+        raise InvalidSearchQueryError("Search query must be at least 3 characters")
+    if len(normalized) > 255:
+        raise InvalidSearchQueryError("Search query must be at most 255 characters")
+    return normalized
+
+
 def _catalog_query_params(
     raw_items: Iterable[tuple[str, str]],
     *,
     limit: int | None = None,
     offset: int | None = None,
     sort: str | None = None,
-    q: str | None = None,
+    search_name: str = "q",
+    search_value: str | None = None,
     passthrough_pagination: bool = False,
 ) -> list[tuple[str, str]]:
     items = list(raw_items)
@@ -99,8 +114,8 @@ def _catalog_query_params(
         normalized.append(("offset", str(offset)))
     if sort is not None:
         normalized.append(("sort", sort))
-    if q:
-        normalized.append(("q", q))
+    if search_value:
+        normalized.append((search_name, search_value))
     return normalized
 
 

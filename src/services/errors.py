@@ -57,6 +57,11 @@ class InvalidSortError(ServiceError):
     code = "INVALID_SORT"
 
 
+class InvalidSearchQueryError(ServiceError):
+    status_code = 400
+    code = "INVALID_REQUEST"
+
+
 class B2BUnavailableError(ServiceError):
     status_code = 503
     code = "SERVICE_UNAVAILABLE"

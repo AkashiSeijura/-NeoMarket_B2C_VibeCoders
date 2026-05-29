@@ -91,3 +91,21 @@ I considered three retry options: Celery task with exponential backoff, a manage
 - `test_unreserve_failure_transitions_to_cancel_pending`: passed
 - `test_cancel_assembling_order_returns_409`: passed
 - `test_other_user_order_returns_404`: passed
+
+## US-CAT-02
+
+Implemented B2C text search for the flow-compatible `GET /api/v1/products?search=...` alias while keeping the published OpenAPI `GET /api/v1/catalog/products?q=...` behavior. B2C validates search length (`3..255`) with canonical `400 INVALID_REQUEST`, trims the query, forwards `search` to B2B for the flow alias, and keeps category/filter/sort/pagination compatibility from US-CAT-01. Empty results return the normal paginated 200 response.
+
+## ADR: product search
+
+I considered SQL `LIKE`/`icontains`, `pg_trgm`, and full-text `SearchVector`. I chose escaped SQL `LIKE`/`icontains` for MVP because it has the lowest implementation complexity and works in the existing B2B database/query layer without new indexes or PostgreSQL extensions. `pg_trgm` would improve fuzzy relevance later, while `SearchVector` is better for ranking and language-aware search but is heavier than this flow requires. Relevance is intentionally basic: match `title` or `description`, then keep existing catalog sorting.
+
+## Test evidence: US-CAT-02
+
+`python -m pytest -q`
+
+- `test_search_returns_matching_products`: passed
+- `test_short_query_returns_400`: passed
+- `test_special_chars_do_not_break_query`: passed
+- `test_empty_results_returns_200`: passed
+- full B2C suite: 30 passed
