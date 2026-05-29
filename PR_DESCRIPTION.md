@@ -127,3 +127,23 @@ I considered three approaches: random category selection (`ORDER BY RANDOM()`), 
 - `test_unknown_product_returns_404`: passed
 - `test_similar_fallback_uses_parent_category`: passed
 - full B2C suite: 34 passed
+
+## US-CAT-05
+
+Implemented category navigation endpoints: published OpenAPI routes `GET /api/v1/catalog/categories`, `GET /api/v1/catalog/categories/tree`, `GET /api/v1/catalog/categories/{category_id}`, plus flow-compatible `GET /api/v1/categories`, `GET /api/v1/categories/{category_id}`, and `GET /api/v1/breadcrumbs`. B2C builds a nested tree and breadcrumbs from the flat B2B category list, returns `404 NOT_FOUND` for unknown categories, `422 orphan_node` for broken hierarchy, and `400 ambiguous_param` when breadcrumbs receives both `category_id` and `product_id`. The OpenAPI tree route returns an array as published; the flow alias wraps it as `{items}`.
+
+## ADR: category hierarchy
+
+I considered PostgreSQL `ltree`, adjacency list with recursive queries, and materialized path. I chose adjacency list for MVP because B2B already provides `parent_id`, and B2C can detect orphan nodes by checking every non-null parent against the flat index in O(n). Breadcrumbs are slower than materialized path because they walk parent links, but category depth is small and category data is seed-like/cacheable. `ltree` and materialized path would make breadcrumbs faster, but they require storage/indexing ownership in B2B and more careful updates when moving a subtree.
+
+## Test evidence: US-CAT-05
+
+`python -m pytest -q`
+
+- `test_category_tree_returns_nested_structure`: passed
+- `test_breadcrumbs_return_path_from_root`: passed
+- `test_unknown_category_returns_404`: passed
+- `test_ambiguous_params_returns_400`: passed
+- `test_missing_breadcrumb_param_returns_400`: passed
+- `test_orphan_node_returns_422`: passed
+- full B2C suite: 43 passed

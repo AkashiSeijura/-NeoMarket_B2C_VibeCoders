@@ -62,6 +62,28 @@ class InvalidSearchQueryError(ServiceError):
     code = "INVALID_REQUEST"
 
 
+class BreadcrumbParamError(ServiceError):
+    status_code = 400
+
+    def __init__(self, error: str, message: str):
+        self.error = error
+        super().__init__(message)
+
+    def to_dict(self) -> dict:
+        return {"error": self.error, "message": self.message}
+
+
+class CategoryHierarchyError(ServiceError):
+    status_code = 422
+
+    def __init__(self):
+        self.error = "orphan_node"
+        super().__init__("category hierarchy is broken")
+
+    def to_dict(self) -> dict:
+        return {"error": self.error, "message": self.message}
+
+
 class B2BUnavailableError(ServiceError):
     status_code = 503
     code = "SERVICE_UNAVAILABLE"

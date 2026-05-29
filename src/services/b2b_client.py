@@ -48,6 +48,27 @@ class B2BClient:
         payload = self._get_json(f"/api/v1/products/{product_id}")
         return payload if isinstance(payload, dict) else {}
 
+    def fetch_categories(self) -> list[dict]:
+        try:
+            payload = self._get_json("/api/v1/categories")
+        except B2BRequestError as exc:
+            if exc.status_code not in {404, 405}:
+                raise
+            payload = self._get_json("/api/v1/catalog/categories")
+        if isinstance(payload, dict):
+            items = payload.get("items", [])
+            return items if isinstance(items, list) else []
+        return payload if isinstance(payload, list) else []
+
+    def fetch_category(self, category_id: str | uuid.UUID) -> dict:
+        try:
+            payload = self._get_json(f"/api/v1/categories/{category_id}")
+        except B2BRequestError as exc:
+            if exc.status_code not in {404, 405}:
+                raise
+            payload = self._get_json(f"/api/v1/catalog/categories/{category_id}")
+        return payload if isinstance(payload, dict) else {}
+
     def fetch_catalog_facets(self, params: list[tuple[str, str]]) -> dict:
         try:
             payload = self._get_json("/api/v1/catalog/facets", params=params)

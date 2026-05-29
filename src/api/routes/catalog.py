@@ -2,13 +2,28 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from src.schemas.catalog import CatalogFacetsResponse, CatalogProductCard, CatalogProductDetail, PaginatedCatalogProducts
+from src.schemas.catalog import (
+    BreadcrumbsResponse,
+    CatalogFacetsResponse,
+    CatalogProductCard,
+    CatalogProductDetail,
+    CategoryDetail,
+    CategoryRef,
+    CategoryTreeNode,
+    CategoryTreeResponse,
+    PaginatedCatalogProducts,
+)
 from src.services.b2b_client import B2BClient, get_b2b_client
 from src.services.catalog_service import (
     SIMILAR_PRODUCTS_DEFAULT_LIMIT,
+    get_breadcrumbs,
     get_catalog_facets,
     get_catalog_product_detail,
+    get_category_detail,
+    get_category_tree,
+    get_category_tree_response,
     get_similar_catalog_products,
+    list_categories,
     list_catalog_products,
 )
 
@@ -59,6 +74,46 @@ def list_products_endpoint(
         q=q,
         search=search,
     )
+
+
+@router.get("/api/v1/catalog/categories", response_model=list[CategoryRef])
+def list_categories_endpoint(
+    b2b_client: B2BClient = Depends(get_b2b_client),
+) -> list[CategoryRef]:
+    return list_categories(b2b_client)
+
+
+@router.get("/api/v1/catalog/categories/tree", response_model=list[CategoryTreeNode])
+def category_tree_endpoint(
+    b2b_client: B2BClient = Depends(get_b2b_client),
+) -> list[CategoryTreeNode]:
+    return get_category_tree(b2b_client)
+
+
+@router.get("/api/v1/categories", response_model=CategoryTreeResponse, include_in_schema=False)
+def category_tree_flow_endpoint(
+    b2b_client: B2BClient = Depends(get_b2b_client),
+) -> CategoryTreeResponse:
+    return get_category_tree_response(b2b_client)
+
+
+@router.get("/api/v1/catalog/categories/{category_id}", response_model=CategoryDetail)
+@router.get("/api/v1/categories/{category_id}", response_model=CategoryDetail, include_in_schema=False)
+def category_detail_endpoint(
+    category_id: str,
+    include_product_count: bool = Query(default=False),
+    b2b_client: B2BClient = Depends(get_b2b_client),
+) -> CategoryDetail:
+    return get_category_detail(b2b_client, category_id, include_product_count=include_product_count)
+
+
+@router.get("/api/v1/breadcrumbs", response_model=BreadcrumbsResponse)
+def breadcrumbs_endpoint(
+    category_id: str | None = Query(default=None),
+    product_id: str | None = Query(default=None),
+    b2b_client: B2BClient = Depends(get_b2b_client),
+) -> BreadcrumbsResponse:
+    return get_breadcrumbs(b2b_client, category_id=category_id, product_id=product_id)
 
 
 @router.get("/api/v1/catalog/products/{product_id}", response_model=CatalogProductDetail)

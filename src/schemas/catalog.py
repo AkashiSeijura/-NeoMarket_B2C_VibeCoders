@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ImageRef(BaseModel):
@@ -19,6 +19,62 @@ class CategoryRef(BaseModel):
     parent_id: uuid.UUID | str | None = None
     level: int | None = None
     path: list[str] | None = None
+    slug: str | None = None
+
+
+class CategoryTreeNode(CategoryRef):
+    children: list["CategoryTreeNode"] = Field(default_factory=list)
+
+
+class CategoryTreeResponse(BaseModel):
+    items: list[CategoryTreeNode]
+
+
+class CategoryParentRef(BaseModel):
+    id: uuid.UUID | str
+    name: str
+    slug: str | None = None
+
+
+class CategorySeo(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    keywords: list[str] | None = None
+
+
+class CategoryDetail(BaseModel):
+    id: uuid.UUID | str
+    name: str
+    slug: str | None = None
+    description: str | None = None
+    parent: CategoryParentRef | None = None
+    product_count: int | None = None
+    seo: CategorySeo | dict | None = None
+    meta_tags: dict | None = None
+    image_url: str | None = None
+    is_active: bool | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class BreadcrumbItem(BaseModel):
+    id: uuid.UUID | str
+    slug: str | None = None
+    name: str
+    url: str
+    level: int
+    is_current: bool
+
+
+class BreadcrumbMeta(BaseModel):
+    resolved_via: str
+    category_id: uuid.UUID | str
+    product_id: uuid.UUID | str | None = None
+
+
+class BreadcrumbsResponse(BaseModel):
+    data: list[BreadcrumbItem]
+    meta: BreadcrumbMeta
 
 
 class CatalogProductCard(BaseModel):
