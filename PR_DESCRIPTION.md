@@ -55,3 +55,57 @@ I considered three options: separate B2C serializer/normalizer, view-level field
 - `test_cost_price_absent_in_response`: passed
 - `test_blocked_product_returns_404`: passed
 - `test_sku_without_stock_is_shown_as_unavailable`: passed
+
+## US-ORD-01
+
+Implemented `POST /api/v1/orders` checkout with idempotency, all-or-nothing B2B reserve, and historical `OrderItem` snapshots (`unit_price`, `product_title`, `sku_name`). The route follows the published B2C OpenAPI by accepting `Idempotency-Key` header and also accepts the canonical flow body fields (`idempotency_key`, `items`, `delivery_address`) for compatibility. Successful checkout creates a `PAID` order; reserve failures return `409 RESERVE_FAILED` with `failed_items`; B2B downtime returns `503 B2B_UNAVAILABLE`.
+
+## ADR: checkout idempotency
+
+I considered three storage options: a unique index on `orders.idempotency_key`, a separate idempotency-key table/cache, and Redis. I chose the unique DB index on `orders.idempotency_key` plus a stored request hash because it is the simplest durable option in this service and handles duplicate inserts under race conditions at the database boundary. Redis is fast but adds operational state and persistence questions; a separate table is more flexible for pending/in-progress states, but adds extra write paths that are not needed for this MVP. B2B reserve is called with the same idempotency key, so concurrent duplicate checkout attempts do not create duplicate orders and should not double-reserve on the B2B side.
+
+## Test evidence: US-ORD-01
+
+`python -m pytest -q`
+
+- `test_checkout_creates_paid_order_with_fixed_prices`: passed
+- `test_partial_reserve_failure_returns_409`: passed
+- `test_idempotency_returns_existing_order`: passed
+- `test_b2b_unavailable_returns_503`: passed
+
+## US-ORD-03
+
+Implemented `POST /api/v1/orders/{order_id}/cancel`. The route checks ownership through the authenticated buyer, returns `404 ORDER_NOT_FOUND` for another user's order, allows cancellation only from `CREATED` and `PAID`, calls B2B `POST /api/v1/unreserve`, and moves the order to `CANCELLED` on success or `CANCEL_PENDING` when B2B unreserve is unavailable.
+
+Contract check: flow `b2c-orders-flows.md#b2c-11-cancel-order` requires `CREATED/PAID -> CANCELLED` on successful unreserve and `CREATED/PAID -> CANCEL_PENDING` on timeout/5xx. Published B2C OpenAPI contains `POST /api/v1/orders/{order_id}/cancel`, returns `OrderResponse`, includes `CANCEL_PENDING` in the order status enum, and defines `409` for disallowed status. Its prose also mentions `ASSEMBLING` as cancellable, but the canonical flow and task DoD require `ASSEMBLING -> 409 CANCEL_NOT_ALLOWED`, so the implementation follows the executable acceptance criteria.
+
+## ADR: cancel retry
+
+I considered three retry options: Celery task with exponential backoff, a management command run by cron, and Django Q. I chose a DB-backed service scaffold (`retry_pending_cancellations`) that can be wired to cron first, because it has the lowest environment setup cost and survives service restarts through persisted `CANCEL_PENDING` rows. Celery gives stronger scheduling/backoff semantics, but requires broker/runtime setup that this repo does not have yet. Django Q has similar operational overhead and is less aligned with the current FastAPI/SQLAlchemy stack.
+
+## Test evidence: US-ORD-03
+
+`python -m pytest -q`
+
+- `test_cancel_paid_order_transitions_to_cancelled`: passed
+- `test_unreserve_failure_transitions_to_cancel_pending`: passed
+- `test_cancel_assembling_order_returns_409`: passed
+- `test_other_user_order_returns_404`: passed
+
+## US-CAT-02
+
+Implemented B2C text search for the flow-compatible `GET /api/v1/products?search=...` alias while keeping the published OpenAPI `GET /api/v1/catalog/products?q=...` behavior. B2C validates search length (`3..255`) with canonical `400 INVALID_REQUEST`, trims the query, forwards `search` to B2B for the flow alias, and keeps category/filter/sort/pagination compatibility from US-CAT-01. Empty results return the normal paginated 200 response.
+
+## ADR: product search
+
+I considered SQL `LIKE`/`icontains`, `pg_trgm`, and full-text `SearchVector`. I chose escaped SQL `LIKE`/`icontains` for MVP because it has the lowest implementation complexity and works in the existing B2B database/query layer without new indexes or PostgreSQL extensions. `pg_trgm` would improve fuzzy relevance later, while `SearchVector` is better for ranking and language-aware search but is heavier than this flow requires. Relevance is intentionally basic: match `title` or `description`, then keep existing catalog sorting.
+
+## Test evidence: US-CAT-02
+
+`python -m pytest -q`
+
+- `test_search_returns_matching_products`: passed
+- `test_short_query_returns_400`: passed
+- `test_special_chars_do_not_break_query`: passed
+- `test_empty_results_returns_200`: passed
+- full B2C suite: 30 passed

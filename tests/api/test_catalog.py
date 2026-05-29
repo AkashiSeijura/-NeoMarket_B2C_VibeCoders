@@ -88,6 +88,79 @@ def test_products_flow_alias_is_supported(client, fake_b2b):
     assert item["has_stock"] is True
 
 
+def test_search_returns_matching_products(client, fake_b2b):
+    category_id = uuid.uuid4()
+    another_category_id = uuid.uuid4()
+    fake_b2b.catalog_products = [
+        _product(category_id=category_id, name="iPhone 15 Pro", min_price=120000, brand="Apple"),
+        {
+            **_product(category_id=category_id, name="Coffee Grinder", min_price=15000, brand="Neo"),
+            "description": "Fresh espresso accessory",
+        },
+        _product(category_id=category_id, name="Android Phone", min_price=90000, brand="Samsung"),
+        _product(category_id=another_category_id, name="iPhone Case", min_price=1000, brand="Apple"),
+    ]
+
+    title_response = client.get(
+        "/api/v1/products",
+        params={"search": "iphone", "category_id": str(category_id), "filters[brand]": "Apple"},
+    )
+    description_response = client.get("/api/v1/products", params={"search": "espresso"})
+
+    assert title_response.status_code == 200
+    title_payload = title_response.json()
+    assert title_payload["total_count"] == 1
+    assert [item["name"] for item in title_payload["items"]] == ["iPhone 15 Pro"]
+    assert ("search", "iphone") in fake_b2b.catalog_calls[-2]
+    assert ("filter[category_id]", str(category_id)) in fake_b2b.catalog_calls[-2]
+    assert ("filter[attributes][brand]", "Apple") in fake_b2b.catalog_calls[-2]
+
+    assert description_response.status_code == 200
+    description_payload = description_response.json()
+    assert description_payload["total_count"] == 1
+    assert description_payload["items"][0]["name"] == "Coffee Grinder"
+
+
+def test_short_query_returns_400(client):
+    response = client.get("/api/v1/products", params={"search": "ab"})
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "INVALID_REQUEST",
+        "message": "Search query must be at least 3 characters",
+    }
+
+
+def test_special_chars_do_not_break_query(client, fake_b2b):
+    fake_b2b.catalog_products = [
+        _product(category_id=uuid.uuid4(), name="iPhone%15", min_price=120000, brand="Apple"),
+        _product(category_id=uuid.uuid4(), name="Coffee Maker", min_price=15000, brand="Neo"),
+    ]
+
+    percent_response = client.get("/api/v1/products", params={"search": "iPhone%15"})
+    quote_response = client.get("/api/v1/products", params={"search": "кофе'"})
+    underscore_response = client.get("/api/v1/products", params={"search": "foo_bar"})
+
+    assert percent_response.status_code == 200
+    assert [item["name"] for item in percent_response.json()["items"]] == ["iPhone%15"]
+    assert quote_response.status_code == 200
+    assert quote_response.json()["items"] == []
+    assert underscore_response.status_code == 200
+    assert underscore_response.json()["items"] == []
+
+
+def test_empty_results_returns_200(client, fake_b2b):
+    fake_b2b.catalog_products = [
+        _product(category_id=uuid.uuid4(), name="Phone", min_price=120000, brand="Apple"),
+    ]
+
+    response = client.get("/api/v1/products", params={"search": "does-not-exist"})
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    assert response.json()["total_count"] == 0
+
+
 def test_facets_return_counts_per_filter_value(client, fake_b2b):
     category_id = uuid.uuid4()
     fake_b2b.catalog_products = [

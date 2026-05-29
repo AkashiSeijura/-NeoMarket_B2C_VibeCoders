@@ -24,6 +24,11 @@ class FakeB2BClient:
         self.catalog_products: list[dict] = []
         self.catalog_product: dict | None = None
         self.fail_catalog = False
+        self.fail_reserve_unavailable = False
+        self.fail_unreserve_unavailable = False
+        self.reserve_failed_items: list[dict] = []
+        self.reserve_calls: list[dict] = []
+        self.unreserve_calls: list[dict] = []
         self.catalog_calls: list[list[tuple[str, str]]] = []
 
     def set_sku(
@@ -51,7 +56,29 @@ class FakeB2BClient:
         return sku
 
     def fetch_skus(self, sku_ids: list[uuid.UUID]) -> dict[uuid.UUID, B2BSku]:
+        if self.fail_catalog:
+            from src.services.errors import B2BUnavailableError
+
+            raise B2BUnavailableError("B2B service unavailable")
         return {sku_id: self.skus[sku_id] for sku_id in sku_ids if sku_id in self.skus}
+
+    def reserve(self, idempotency_key: uuid.UUID, items: list[dict]) -> None:
+        if self.fail_reserve_unavailable:
+            from src.services.errors import B2BUnavailableError
+
+            raise B2BUnavailableError("B2B service unavailable")
+        self.reserve_calls.append({"idempotency_key": idempotency_key, "items": items})
+        if self.reserve_failed_items:
+            from src.services.errors import ReserveFailedError
+
+            raise ReserveFailedError(failed_items=self.reserve_failed_items)
+
+    def unreserve(self, order_id: uuid.UUID, items: list[dict]) -> None:
+        self.unreserve_calls.append({"order_id": order_id, "items": items})
+        if self.fail_unreserve_unavailable:
+            from src.services.errors import B2BUnavailableError
+
+            raise B2BUnavailableError("B2B service unavailable")
 
     def fetch_catalog_products(self, params: list[tuple[str, str]]) -> dict:
         if self.fail_catalog:
@@ -66,13 +93,14 @@ class FakeB2BClient:
         if category_id:
             products = [item for item in products if item.get("category_id") == category_id]
 
-        query = params_map.get("q")
+        query = params_map.get("q") or params_map.get("search")
         if query:
             lowered = query.lower()
             products = [
                 item
                 for item in products
                 if lowered in (item.get("name") or item.get("title") or "").lower()
+                or lowered in (item.get("description") or "").lower()
             ]
 
         for key, value in params:
