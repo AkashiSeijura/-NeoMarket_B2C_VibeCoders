@@ -4,13 +4,14 @@ from collections.abc import Iterable
 
 from starlette.datastructures import QueryParams
 
-from src.schemas.catalog import CatalogFacetsResponse, CatalogProductDetail, PaginatedCatalogProducts
+from src.schemas.catalog import CatalogFacetsResponse, CatalogProductCard, CatalogProductDetail, PaginatedCatalogProducts
 from src.services.b2b_client import B2BClient
 from src.services.errors import InvalidSearchQueryError, InvalidSortError, NotFoundError
 
 
 ALLOWED_SORTS = ("price_asc", "price_desc", "popularity", "new")
 DEFAULT_SORT = "popularity"
+SIMILAR_PRODUCTS_DEFAULT_LIMIT = 8
 
 
 def list_catalog_products(
@@ -60,6 +61,43 @@ def get_catalog_product_detail(b2b_client: B2BClient, product_id: str) -> Catalo
     if _is_hidden_product(payload):
         raise NotFoundError("Product not found")
     return CatalogProductDetail.model_validate(_normalize_product_detail(payload))
+
+
+def get_similar_catalog_products(
+    b2b_client: B2BClient,
+    product_id: str,
+    *,
+    limit: int = SIMILAR_PRODUCTS_DEFAULT_LIMIT,
+) -> list[CatalogProductCard]:
+    current_product = b2b_client.fetch_catalog_product(product_id)
+    if _is_hidden_product(current_product):
+        raise NotFoundError("Product not found")
+
+    category_id = _product_category_id(current_product)
+    if category_id is None:
+        return []
+
+    normalized_limit = _clamp(limit, 1, 50)
+    products = _similar_products_from_category(
+        b2b_client,
+        category_id,
+        product_id=product_id,
+        limit=normalized_limit,
+    )
+
+    parent_category_id = _product_parent_category_id(current_product)
+    if len(products) < normalized_limit and parent_category_id is not None:
+        products.extend(
+            _similar_products_from_category(
+                b2b_client,
+                parent_category_id,
+                product_id=product_id,
+                limit=normalized_limit - len(products),
+                seen_ids={str(item["id"]) for item in products},
+            )
+        )
+
+    return [CatalogProductCard.model_validate(_normalize_catalog_item(product)) for product in products[:normalized_limit]]
 
 
 def _validate_sort(sort: str) -> None:
@@ -190,6 +228,59 @@ def _normalize_product_detail(product: dict) -> dict:
         }
     )
     return card
+
+
+def _similar_products_from_category(
+    b2b_client: B2BClient,
+    category_id: str,
+    *,
+    product_id: str,
+    limit: int,
+    seen_ids: set[str] | None = None,
+) -> list[dict]:
+    seen = set(seen_ids or set())
+    seen.add(str(product_id))
+    payload = b2b_client.fetch_catalog_products(
+        [
+            ("filter[category_id]", category_id),
+            ("limit", str(min(limit + len(seen), 100))),
+            ("offset", "0"),
+            ("sort", DEFAULT_SORT),
+        ]
+    )
+    items = payload.get("items", []) if isinstance(payload, dict) else payload
+    products: list[dict] = []
+    for item in items if isinstance(items, list) else []:
+        item_id = str(item.get("id"))
+        if item_id in seen:
+            continue
+        seen.add(item_id)
+        products.append(item)
+        if len(products) >= limit:
+            break
+    return products
+
+
+def _product_category_id(product: dict) -> str | None:
+    if product.get("category_id") is not None:
+        return str(product["category_id"])
+    category = product.get("category")
+    if isinstance(category, dict) and category.get("id") is not None:
+        return str(category["id"])
+    return None
+
+
+def _product_parent_category_id(product: dict) -> str | None:
+    category = product.get("category")
+    if isinstance(category, dict):
+        if category.get("parent_id") is not None:
+            return str(category["parent_id"])
+        parent = category.get("parent")
+        if isinstance(parent, dict) and parent.get("id") is not None:
+            return str(parent["id"])
+    if product.get("parent_category_id") is not None:
+        return str(product["parent_category_id"])
+    return None
 
 
 def _normalize_sku(sku: dict) -> dict:

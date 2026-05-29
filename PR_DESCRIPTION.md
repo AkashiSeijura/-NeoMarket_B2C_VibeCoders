@@ -109,3 +109,21 @@ I considered SQL `LIKE`/`icontains`, `pg_trgm`, and full-text `SearchVector`. I 
 - `test_special_chars_do_not_break_query`: passed
 - `test_empty_results_returns_200`: passed
 - full B2C suite: 30 passed
+
+## US-CAT-04
+
+Implemented similar products for `GET /api/v1/catalog/products/{product_id}/similar` and the flow-compatible alias `GET /api/v1/products/{product_id}/similar`. The endpoint verifies the current product through B2B, returns `404 NOT_FOUND` for unknown/hidden products, fetches alternatives from the same category, excludes the current product, and fills from the parent category when B2B returns fewer than requested. The response follows the published B2C OpenAPI for this endpoint: an array of `CatalogProductCard`; default limit is 8 for the canonical flow/DoD, while query validation allows the OpenAPI limit range up to 50.
+
+## ADR: similar product selection
+
+I considered three approaches: random category selection (`ORDER BY RANDOM()`), ranking by maximum attribute overlap, and cached precomputed recommendations. I chose category-based selection proxied to B2B with parent-category fallback for MVP because it has the lowest implementation complexity and keeps visibility/category consistency in the product source of truth. Attribute matching would be more relevant but requires a stable characteristic taxonomy and scoring rules that are not present yet. Cached recommendations would make repeated requests very stable and fast, but add invalidation complexity; for now consistency with current B2B product state is more important than cache speed.
+
+## Test evidence: US-CAT-04
+
+`python -m pytest -q`
+
+- `test_similar_returns_up_to_8_from_same_category`: passed
+- `test_empty_category_returns_200_empty_list`: passed
+- `test_unknown_product_returns_404`: passed
+- `test_similar_fallback_uses_parent_category`: passed
+- full B2C suite: 34 passed
