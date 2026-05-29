@@ -39,6 +39,15 @@ def get_required_user_id(
     return user_id
 
 
+def get_jwt_user_id(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> uuid.UUID:
+    user_id = _user_id_from_jwt_authorization(authorization)
+    if user_id is None:
+        raise UnauthorizedError("Missing or invalid user identity")
+    return user_id
+
+
 def get_required_session_id(x_session_id: str | None = Header(default=None, alias="X-Session-Id")) -> str:
     if not x_session_id:
         raise MissingCartIdentityError("Pass X-Session-Id")
@@ -66,6 +75,27 @@ def _user_id_from_authorization(authorization: str | None) -> uuid.UUID | None:
 
     sub = payload.get("sub")
     user_id = _try_uuid(sub)
+    if user_id is None:
+        raise UnauthorizedError("JWT sub must be a UUID")
+    return user_id
+
+
+def _user_id_from_jwt_authorization(authorization: str | None) -> uuid.UUID | None:
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise UnauthorizedError("Invalid Authorization header")
+
+    parts = token.split(".")
+    if len(parts) < 2:
+        raise UnauthorizedError("Invalid JWT")
+    try:
+        payload = json.loads(_b64url_decode(parts[1]))
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise UnauthorizedError("Invalid JWT") from exc
+
+    user_id = _try_uuid(payload.get("sub"))
     if user_id is None:
         raise UnauthorizedError("JWT sub must be a UUID")
     return user_id

@@ -131,6 +131,18 @@ class FakeB2BClient:
             "offset": offset,
         }
 
+    def fetch_products_by_ids(self, product_ids: list[uuid.UUID]) -> list[dict]:
+        requested = {str(product_id) for product_id in product_ids}
+        result = []
+        for product in self.catalog_products:
+            if str(product.get("id")) not in requested:
+                continue
+            status = str(product.get("status") or "MODERATED")
+            if status != "MODERATED" or product.get("deleted") or product.get("blocked"):
+                continue
+            result.append(product)
+        return result
+
     def fetch_catalog_product(self, product_id: str) -> dict:
         if self.fail_catalog:
             from src.services.errors import B2BUnavailableError
