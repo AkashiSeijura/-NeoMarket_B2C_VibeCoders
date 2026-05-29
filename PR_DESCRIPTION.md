@@ -147,3 +147,24 @@ I considered PostgreSQL `ltree`, adjacency list with recursive queries, and mate
 - `test_missing_breadcrumb_param_returns_400`: passed
 - `test_orphan_node_returns_422`: passed
 - full B2C suite: 43 passed
+
+## US-CART-01
+
+Implemented buyer favorites storage with `user_id` taken only from Bearer JWT `sub`: `GET /api/v1/favorites`, OpenAPI-compatible `PUT /api/v1/favorites/{product_id}`, flow-compatible `POST /api/v1/favorites/{product_id}`, and idempotent `DELETE /api/v1/favorites/{product_id}`. Favorites store only `user_id`, `product_id`, and `added_at`; reads enrich product cards from B2B by batch `ids` and exclude products that B2B does not return as public/visible. Query/body `user_id` is not declared on the endpoints and is ignored by FastAPI, so cross-user reads use the JWT identity.
+
+Published B2C OpenAPI currently defines `GET`, `PUT`, and `DELETE` for favorites, with `PUT` returning `204`; the canonical flow/DoD also requires `POST` returning `201` for first add and `200` for repeat add. The implementation supports both: `PUT` is kept for OpenAPI compatibility, while `POST` is added as a hidden flow-compatible route for acceptance tests.
+
+## ADR: favorite user identity
+
+I considered three identity options: `user_id` from query, `user_id` from JWT claims, and `X-User-Id`. Query `user_id` is rejected because it creates a direct IDOR risk: a client can ask for another buyer's list. `X-User-Id` is simple, but spoofable without a trusted gateway boundary. I chose Bearer JWT `sub` because it has the best IDOR protection with low implementation complexity in this FastAPI service.
+
+## Test evidence: US-CART-01
+
+`python -m pytest tests/api/test_favorites.py -q`
+
+- `test_add_to_favorites_returns_201`: passed
+- `test_get_favorites_enriched_from_b2b`: passed
+- `test_repeat_add_returns_200_not_duplicate`: passed
+- `test_blocked_product_excluded_from_list`: passed
+- `test_user_id_from_query_is_ignored`: passed
+- full B2C suite: 48 passed

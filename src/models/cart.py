@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import CheckConstraint, Index, Integer, String, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import CheckConstraint, DateTime, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.db.base import Base
 from src.db.types import GUID
-from src.models.base import TimestampMixin
+from src.models.base import TimestampMixin, utcnow
 
 
 class CartItem(TimestampMixin, Base):
@@ -31,3 +33,17 @@ class CartItem(TimestampMixin, Base):
     sku_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
     product_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class Favorite(Base):
+    __tablename__ = "favorites"
+    __table_args__ = (
+        Index("ix_favorites_user_id", "user_id"),
+        Index("ix_favorites_product_id", "product_id"),
+        UniqueConstraint("user_id", "product_id", name="uq_favorites_user_product"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
+    product_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
