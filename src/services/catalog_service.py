@@ -4,9 +4,25 @@ from collections.abc import Iterable
 
 from starlette.datastructures import QueryParams
 
-from src.schemas.catalog import CatalogFacetsResponse, CatalogProductCard, CatalogProductDetail, PaginatedCatalogProducts
+from src.schemas.catalog import (
+    BreadcrumbsResponse,
+    CatalogFacetsResponse,
+    CatalogProductCard,
+    CatalogProductDetail,
+    CategoryDetail,
+    CategoryRef,
+    CategoryTreeNode,
+    CategoryTreeResponse,
+    PaginatedCatalogProducts,
+)
 from src.services.b2b_client import B2BClient
-from src.services.errors import InvalidSearchQueryError, InvalidSortError, NotFoundError
+from src.services.errors import (
+    BreadcrumbParamError,
+    CategoryHierarchyError,
+    InvalidSearchQueryError,
+    InvalidSortError,
+    NotFoundError,
+)
 
 
 ALLOWED_SORTS = ("price_asc", "price_desc", "popularity", "new")
@@ -56,6 +72,112 @@ def get_catalog_facets(
     return CatalogFacetsResponse.model_validate(payload)
 
 
+def list_categories(b2b_client: B2BClient) -> list[CategoryRef]:
+    return [CategoryRef.model_validate(category) for category in _normalized_categories(b2b_client)]
+
+
+def get_category_tree(b2b_client: B2BClient) -> list[CategoryTreeNode]:
+    categories = _normalized_categories(b2b_client)
+    return [CategoryTreeNode.model_validate(node) for node in _build_category_tree(categories)]
+
+
+def get_category_tree_response(b2b_client: B2BClient) -> CategoryTreeResponse:
+    return CategoryTreeResponse(items=get_category_tree(b2b_client))
+
+
+def get_category_detail(
+    b2b_client: B2BClient,
+    category_id: str,
+    *,
+    include_product_count: bool = False,
+) -> CategoryDetail:
+    categories = _normalized_categories(b2b_client)
+    index = _category_index(categories)
+    category = index.get(str(category_id))
+    if category is None:
+        raise NotFoundError("Category not found")
+    _category_path(categories, str(category_id))
+
+    parent = None
+    parent_id = category.get("parent_id")
+    if parent_id is not None:
+        parent_category = index[str(parent_id)]
+        parent = {
+            "id": parent_category["id"],
+            "name": parent_category["name"],
+            "slug": parent_category.get("slug"),
+        }
+
+    payload = {
+        **category,
+        "description": category.get("description"),
+        "parent": parent,
+        "seo": category.get("seo"),
+        "meta_tags": category.get("meta_tags"),
+        "image_url": category.get("image_url"),
+        "is_active": category.get("is_active"),
+        "created_at": category.get("created_at"),
+        "updated_at": category.get("updated_at"),
+    }
+    if include_product_count:
+        payload["product_count"] = _category_product_count(b2b_client, category_id)
+    elif "product_count" in category:
+        payload["product_count"] = category["product_count"]
+
+    return CategoryDetail.model_validate(payload)
+
+
+def get_breadcrumbs(
+    b2b_client: B2BClient,
+    *,
+    category_id: str | None,
+    product_id: str | None,
+) -> BreadcrumbsResponse:
+    if category_id and product_id:
+        raise BreadcrumbParamError("ambiguous_param", "only one of category_id or product_id must be provided")
+    if not category_id and not product_id:
+        raise BreadcrumbParamError("missing_param", "category_id or product_id must be provided")
+
+    resolved_via = "category_id"
+    resolved_category_id = category_id
+    if product_id:
+        product = b2b_client.fetch_catalog_product(product_id)
+        if _is_hidden_product(product):
+            raise NotFoundError("Product not found")
+        resolved_category_id = _product_category_id(product)
+        resolved_via = "product_id"
+        if resolved_category_id is None:
+            raise CategoryHierarchyError()
+
+    categories = _normalized_categories(b2b_client)
+    path = _category_path(categories, str(resolved_category_id))
+    url_parts: list[str] = []
+    data = []
+    for level, category in enumerate(path):
+        url_parts.append(str(category.get("slug") or category["id"]))
+        data.append(
+            {
+                "id": category["id"],
+                "slug": category.get("slug"),
+                "name": category["name"],
+                "url": f"/catalog/{'/'.join(url_parts)}",
+                "level": level,
+                "is_current": level == len(path) - 1,
+            }
+        )
+
+    return BreadcrumbsResponse.model_validate(
+        {
+            "data": data,
+            "meta": {
+                "resolved_via": resolved_via,
+                "category_id": str(resolved_category_id),
+                "product_id": product_id,
+            },
+        }
+    )
+
+
 def get_catalog_product_detail(b2b_client: B2BClient, product_id: str) -> CatalogProductDetail:
     payload = b2b_client.fetch_catalog_product(product_id)
     if _is_hidden_product(payload):
@@ -103,6 +225,111 @@ def get_similar_catalog_products(
 def _validate_sort(sort: str) -> None:
     if sort not in ALLOWED_SORTS:
         raise InvalidSortError(f"Invalid sort parameter. Allowed values: {', '.join(ALLOWED_SORTS)}")
+
+
+def _normalized_categories(b2b_client: B2BClient) -> list[dict]:
+    return [_normalize_category(category) for category in b2b_client.fetch_categories()]
+
+
+def _normalize_category(category: dict) -> dict:
+    name = str(category.get("name") or category.get("title") or "")
+    slug = category.get("slug") or _slug(name) or str(category.get("id"))
+    payload = {
+        **category,
+        "id": str(category.get("id")),
+        "name": name,
+        "parent_id": str(category["parent_id"]) if category.get("parent_id") is not None else None,
+        "slug": slug,
+    }
+    if payload.get("level") is not None:
+        payload["level"] = int(payload["level"])
+    if payload.get("path") is not None:
+        payload["path"] = [str(item) for item in payload["path"]]
+    return payload
+
+
+def _category_index(categories: list[dict]) -> dict[str, dict]:
+    return {str(category["id"]): category for category in categories}
+
+
+def _build_category_tree(categories: list[dict]) -> list[dict]:
+    index = _category_index(categories)
+    nodes = [{**category, "children": []} for category in categories]
+    node_index = {str(node["id"]): node for node in nodes}
+    roots: list[dict] = []
+
+    for node in nodes:
+        parent_id = node.get("parent_id")
+        if parent_id is None:
+            roots.append(node)
+            continue
+        if str(parent_id) not in index or str(parent_id) == str(node["id"]):
+            raise CategoryHierarchyError()
+        node_index[str(parent_id)]["children"].append(node)
+
+    _detect_category_cycles(categories)
+    _assign_category_levels(roots, level=0, path=[])
+    return roots
+
+
+def _category_path(categories: list[dict], category_id: str) -> list[dict]:
+    index = _category_index(categories)
+    category = index.get(str(category_id))
+    if category is None:
+        raise NotFoundError("Category not found")
+
+    path = []
+    seen: set[str] = set()
+    current = category
+    while current is not None:
+        current_id = str(current["id"])
+        if current_id in seen:
+            raise CategoryHierarchyError()
+        seen.add(current_id)
+        path.append(current)
+        parent_id = current.get("parent_id")
+        if parent_id is None:
+            break
+        parent = index.get(str(parent_id))
+        if parent is None:
+            raise CategoryHierarchyError()
+        current = parent
+    return list(reversed(path))
+
+
+def _detect_category_cycles(categories: list[dict]) -> None:
+    index = _category_index(categories)
+    for category in categories:
+        seen: set[str] = set()
+        current = category
+        while current.get("parent_id") is not None:
+            current_id = str(current["id"])
+            if current_id in seen:
+                raise CategoryHierarchyError()
+            seen.add(current_id)
+            current = index.get(str(current["parent_id"]))
+            if current is None:
+                raise CategoryHierarchyError()
+
+
+def _assign_category_levels(nodes: list[dict], *, level: int, path: list[str]) -> None:
+    for node in nodes:
+        node["level"] = level
+        node["path"] = [*path, node["name"]]
+        _assign_category_levels(node["children"], level=level + 1, path=node["path"])
+
+
+def _category_product_count(b2b_client: B2BClient, category_id: str) -> int:
+    payload = b2b_client.fetch_catalog_products(
+        [("filter[category_id]", str(category_id)), ("limit", "1"), ("offset", "0")]
+    )
+    if isinstance(payload, dict):
+        return int(payload.get("total_count", len(payload.get("items", []))))
+    return len(payload) if isinstance(payload, list) else 0
+
+
+def _slug(value: str) -> str:
+    return value.strip().lower().replace(" ", "_")
 
 
 def _normalize_search_query(query: str | None) -> str | None:

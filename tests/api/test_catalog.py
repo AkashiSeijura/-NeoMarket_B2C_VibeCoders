@@ -179,6 +179,148 @@ def test_facets_return_counts_per_filter_value(client, fake_b2b):
     assert {"value": "Samsung", "count": 1} in brand_facet["values"]
 
 
+def test_category_tree_returns_nested_structure(client, fake_b2b):
+    root_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+    leaf_id = uuid.uuid4()
+    fake_b2b.categories = [
+        {"id": str(child_id), "name": "Smartphones", "slug": "smartphones", "parent_id": str(root_id)},
+        {"id": str(root_id), "name": "Electronics", "slug": "electronics", "parent_id": None},
+        {"id": str(leaf_id), "name": "Android", "slug": "android", "parent_id": str(child_id)},
+    ]
+
+    response = client.get("/api/v1/catalog/categories/tree")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["id"] == str(root_id)
+    assert payload[0]["level"] == 0
+    assert payload[0]["children"][0]["id"] == str(child_id)
+    assert payload[0]["children"][0]["children"][0]["id"] == str(leaf_id)
+
+
+def test_category_tree_flow_alias_wraps_items(client, fake_b2b):
+    category_id = uuid.uuid4()
+    fake_b2b.categories = [{"id": str(category_id), "name": "Clothes", "parent_id": None}]
+
+    response = client.get("/api/v1/categories")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["id"] == str(category_id)
+
+
+def test_category_detail_returns_category_metadata(client, fake_b2b):
+    root_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+    fake_b2b.categories = [
+        {"id": str(root_id), "name": "Electronics", "slug": "electronics", "parent_id": None},
+        {
+            "id": str(child_id),
+            "name": "Smartphones",
+            "slug": "smartphones",
+            "description": "Mobile phones",
+            "parent_id": str(root_id),
+        },
+    ]
+    fake_b2b.catalog_products = [
+        _product(category_id=child_id, name="Phone", min_price=120000, brand="Neo"),
+    ]
+
+    response = client.get(f"/api/v1/catalog/categories/{child_id}?include_product_count=true")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == str(child_id)
+    assert payload["parent"]["id"] == str(root_id)
+    assert payload["product_count"] == 1
+
+
+def test_breadcrumbs_return_path_from_root(client, fake_b2b):
+    root_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+    leaf_id = uuid.uuid4()
+    fake_b2b.categories = [
+        {"id": str(root_id), "name": "Electronics", "slug": "electronics", "parent_id": None},
+        {"id": str(child_id), "name": "Smartphones", "slug": "smartphones", "parent_id": str(root_id)},
+        {"id": str(leaf_id), "name": "Android", "slug": "android", "parent_id": str(child_id)},
+    ]
+
+    response = client.get(f"/api/v1/breadcrumbs?category_id={leaf_id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["id"] for item in payload["data"]] == [str(root_id), str(child_id), str(leaf_id)]
+    assert [item["url"] for item in payload["data"]] == [
+        "/catalog/electronics",
+        "/catalog/electronics/smartphones",
+        "/catalog/electronics/smartphones/android",
+    ]
+    assert payload["data"][-1]["is_current"] is True
+    assert payload["meta"]["resolved_via"] == "category_id"
+
+
+def test_breadcrumbs_resolve_product_category(client, fake_b2b):
+    category_id = uuid.uuid4()
+    product_id = uuid.uuid4()
+    fake_b2b.categories = [{"id": str(category_id), "name": "Electronics", "slug": "electronics", "parent_id": None}]
+    fake_b2b.catalog_product = {
+        "id": str(product_id),
+        "name": "Phone",
+        "status": "MODERATED",
+        "deleted": False,
+        "category_id": str(category_id),
+    }
+
+    response = client.get(f"/api/v1/breadcrumbs?product_id={product_id}")
+
+    assert response.status_code == 200
+    assert response.json()["meta"]["resolved_via"] == "product_id"
+    assert response.json()["data"][0]["id"] == str(category_id)
+
+
+def test_unknown_category_returns_404(client, fake_b2b):
+    response = client.get(f"/api/v1/breadcrumbs?category_id={uuid.uuid4()}")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "NOT_FOUND"
+
+
+def test_ambiguous_params_returns_400(client):
+    response = client.get(f"/api/v1/breadcrumbs?category_id={uuid.uuid4()}&product_id={uuid.uuid4()}")
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "ambiguous_param",
+        "message": "only one of category_id or product_id must be provided",
+    }
+
+
+def test_missing_breadcrumb_param_returns_400(client):
+    response = client.get("/api/v1/breadcrumbs")
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "missing_param",
+        "message": "category_id or product_id must be provided",
+    }
+
+
+def test_orphan_node_returns_422(client, fake_b2b):
+    category_id = uuid.uuid4()
+    fake_b2b.categories = [
+        {"id": str(category_id), "name": "Orphan", "parent_id": str(uuid.uuid4())},
+    ]
+
+    response = client.get(f"/api/v1/breadcrumbs?category_id={category_id}")
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error": "orphan_node",
+        "message": "category hierarchy is broken",
+    }
+
+
 def test_invalid_sort_returns_400(client):
     response = client.get("/api/v1/catalog/products?sort=rating")
 
