@@ -321,3 +321,88 @@ def test_sku_without_stock_is_shown_as_unavailable(client, fake_b2b):
     assert response.status_code == 200
     out_of_stock_sku = response.json()["skus"][1]
     assert out_of_stock_sku["available_quantity"] == 0
+
+
+def test_similar_returns_up_to_8_from_same_category(client, fake_b2b):
+    category_id = uuid.uuid4()
+    product_id = uuid.uuid4()
+    current = _product(
+        product_id=product_id,
+        category_id=category_id,
+        name="Phone Current",
+        min_price=100000,
+        brand="Neo",
+    )
+    current["status"] = "MODERATED"
+    similar = [
+        _product(
+            category_id=category_id,
+            name=f"Phone Similar {index}",
+            min_price=90000 + index,
+            brand="Neo",
+            popularity=index,
+        )
+        for index in range(10)
+    ]
+    fake_b2b.catalog_products = [current, *similar]
+
+    response = client.get(f"/api/v1/products/{product_id}/similar")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 8
+    assert str(product_id) not in {item["id"] for item in payload}
+    assert {item["category"]["id"] for item in payload} == {str(category_id)}
+
+
+def test_empty_category_returns_200_empty_list(client, fake_b2b):
+    category_id = uuid.uuid4()
+    product_id = uuid.uuid4()
+    current = _product(
+        product_id=product_id,
+        category_id=category_id,
+        name="Only Phone",
+        min_price=100000,
+        brand="Neo",
+    )
+    current["status"] = "MODERATED"
+    fake_b2b.catalog_products = [current]
+
+    response = client.get(f"/api/v1/products/{product_id}/similar")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_unknown_product_returns_404(client):
+    response = client.get(f"/api/v1/products/{uuid.uuid4()}/similar")
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "NOT_FOUND"
+
+
+def test_similar_fallback_uses_parent_category(client, fake_b2b):
+    child_category_id = uuid.uuid4()
+    parent_category_id = uuid.uuid4()
+    product_id = uuid.uuid4()
+    current = _product(
+        product_id=product_id,
+        category_id=child_category_id,
+        name="Only Child Phone",
+        min_price=100000,
+        brand="Neo",
+    )
+    current["status"] = "MODERATED"
+    current["category"] = {"id": str(child_category_id), "parent_id": str(parent_category_id)}
+    parent_product = _product(
+        category_id=parent_category_id,
+        name="Parent Category Phone",
+        min_price=90000,
+        brand="Neo",
+    )
+    fake_b2b.catalog_products = [current, parent_product]
+
+    response = client.get(f"/api/v1/catalog/products/{product_id}/similar")
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()] == [parent_product["id"]]
