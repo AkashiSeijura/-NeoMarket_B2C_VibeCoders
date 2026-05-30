@@ -128,6 +128,34 @@ class B2BClient:
         if isinstance(data, dict) and data.get("unreserved") is False:
             raise B2BUnavailableError("B2B unreserve was not completed")
 
+    def fulfill(self, order_id: uuid.UUID, items: list[dict]) -> None:
+        headers = {"X-Service-Key": self.service_key}
+        payload = {"order_id": str(order_id), "items": items}
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(
+                    f"{self.base_url}/api/v1/inventory/fulfill",
+                    json=payload,
+                    headers=headers,
+                )
+                if response.status_code in {404, 405}:
+                    response = client.post(f"{self.base_url}/api/v1/fulfill", json=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            raise B2BUnavailableError("B2B service unavailable") from exc
+
+        if response.status_code >= 500:
+            raise B2BUnavailableError("B2B service unavailable")
+        if response.status_code >= 400:
+            raise _b2b_request_error(response)
+
+        data = response.json() if response.content else {}
+        if isinstance(data, dict):
+            status_value = data.get("status")
+            if data.get("fulfilled") is False or data.get("ok") is False:
+                raise B2BUnavailableError("B2B fulfill was not completed")
+            if status_value is not None and status_value != "FULFILLED":
+                raise B2BUnavailableError("B2B fulfill was not completed")
+
     def _get_json(self, path: str, params: list[tuple[str, str]] | None = None) -> dict | list:
         headers = {"X-Service-Key": self.service_key}
         try:

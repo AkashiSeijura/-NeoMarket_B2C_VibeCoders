@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from src.models.order import Order
+from src.services.order_service import retry_delivered_fulfillments, transition_order_status
 from tests.conftest import auth_headers
 
 
@@ -249,6 +251,86 @@ def test_unreserve_failure_transitions_to_cancel_pending(client, fake_b2b, db_se
     assert response.json()["status"] == "CANCEL_PENDING"
     order = db_session.get(Order, uuid.UUID(created.json()["id"]))
     assert order.status == "CANCEL_PENDING"
+
+
+def test_delivered_status_triggers_fulfill_to_b2b(client, fake_b2b, db_session):
+    user_id = uuid.uuid4()
+    sku_id = uuid.uuid4()
+    idempotency_key = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+    created = client.post(
+        "/api/v1/orders",
+        json=_order_payload(idempotency_key, sku_id, quantity=1),
+        headers=auth_headers(user_id),
+    )
+    order = db_session.get(Order, uuid.UUID(created.json()["id"]))
+    order.status = "DELIVERING"
+    db_session.commit()
+
+    response = transition_order_status(db_session, order.id, "DELIVERED", fake_b2b)
+
+    assert response.status == "DELIVERED"
+    db_session.refresh(order)
+    assert order.status == "DELIVERED"
+    assert fake_b2b.fulfill_calls == [
+        {
+            "order_id": order.id,
+            "items": [{"sku_id": str(sku_id), "quantity": 1}],
+        }
+    ]
+
+
+def test_fulfill_failure_retried_asynchronously(client, fake_b2b, db_session, caplog):
+    user_id = uuid.uuid4()
+    sku_id = uuid.uuid4()
+    idempotency_key = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+    created = client.post(
+        "/api/v1/orders",
+        json=_order_payload(idempotency_key, sku_id, quantity=1),
+        headers=auth_headers(user_id),
+    )
+    order = db_session.get(Order, uuid.UUID(created.json()["id"]))
+    order.status = "DELIVERING"
+    db_session.commit()
+    fake_b2b.fail_fulfill_unavailable = True
+
+    with caplog.at_level(logging.ERROR):
+        transition_order_status(db_session, order.id, "DELIVERED", fake_b2b)
+
+    db_session.refresh(order)
+    assert order.status == "DELIVERED"
+    assert "B2B fulfill failed for delivered order" in caplog.text
+    assert len(fake_b2b.fulfill_calls) == 1
+
+    fake_b2b.fail_fulfill_unavailable = False
+    retried_count = retry_delivered_fulfillments(db_session, fake_b2b)
+
+    assert retried_count == 1
+    assert len(fake_b2b.fulfill_calls) == 2
+    assert fake_b2b.fulfill_calls[1]["order_id"] == order.id
+
+
+def test_repeated_fulfill_idempotent(client, fake_b2b, db_session):
+    user_id = uuid.uuid4()
+    sku_id = uuid.uuid4()
+    idempotency_key = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+    created = client.post(
+        "/api/v1/orders",
+        json=_order_payload(idempotency_key, sku_id, quantity=1),
+        headers=auth_headers(user_id),
+    )
+    order = db_session.get(Order, uuid.UUID(created.json()["id"]))
+    order.status = "DELIVERING"
+    db_session.commit()
+
+    transition_order_status(db_session, order.id, "DELIVERED", fake_b2b)
+    transition_order_status(db_session, order.id, "DELIVERED", fake_b2b)
+
+    assert len(fake_b2b.fulfill_calls) == 2
+    assert fake_b2b.fulfill_calls[0] == fake_b2b.fulfill_calls[1]
+    assert fake_b2b.fulfill_side_effects == 1
 
 
 def test_cancel_assembling_order_returns_409(client, fake_b2b, db_session):

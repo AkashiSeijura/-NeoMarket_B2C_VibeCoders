@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -26,6 +27,10 @@ class OrderCreateRequest(BaseModel):
         if self.items_snapshot is None and self.items is not None:
             self.items_snapshot = self.items
         return self
+
+
+class OrderStatusUpdateRequest(BaseModel):
+    status: Literal["ASSEMBLING", "DELIVERING", "DELIVERED"]
 
 
 class AddressResponse(BaseModel):

@@ -1,3 +1,22 @@
+## US-ORD-05
+
+Implemented final reserve fulfillment when an order transitions `DELIVERING -> DELIVERED`. Because this repo is FastAPI/SQLAlchemy rather than Django, the trigger is a service-level admin action (`transition_order_status`) exposed through a hidden service-key route; it commits `DELIVERED` before calling B2B so a fulfill failure never rolls the order back. B2C calls the published B2B OpenAPI path `POST /api/v1/inventory/fulfill` and falls back to the legacy flow path `POST /api/v1/fulfill`; retry scaffold `retry_delivered_fulfillments` replays `DELIVERED` orders and relies on B2B order_id idempotency.
+
+Contract check: published B2C OpenAPI has no dedicated fulfill endpoint, but includes `DELIVERED` in `OrderResponse.status`; canonical flow `b2c-orders-flows.md#b2c-13-fulfill` defines the transition side effect and retry rule. Published B2B OpenAPI defines fulfill as `/api/v1/inventory/fulfill` with `{order_id, items}` and `FULFILLED` response, so B2C targets that first.
+
+## ADR: delivered fulfill trigger
+
+I considered a Django `post_save` signal, a Django Admin action, and overriding model `save()`. This service is not Django, so I chose the closest equivalent to an Admin action: an explicit service function for status transitions, callable from a hidden internal route and directly from tests. Compared with a signal or `save()` override, the explicit action has lower risk of accidental double calls on unrelated persistence and is easy to test without Django Admin. Repeated `DELIVERED` calls are still tolerated because B2B owns idempotency by `order_id`.
+
+## Test evidence: US-ORD-05
+
+`python -m pytest tests/api/test_orders.py -q -k "delivered_status_triggers_fulfill_to_b2b or fulfill_failure_retried_asynchronously or repeated_fulfill_idempotent"`
+
+- `test_delivered_status_triggers_fulfill_to_b2b`: passed
+- `test_fulfill_failure_retried_asynchronously`: passed
+- `test_repeated_fulfill_idempotent`: passed
+- full B2C suite: passed with `python -m pytest -q`
+
 ## US-ORD-04
 
 Implemented incoming B2B product events. The service accepts flow-compatible `POST /api/v1/events/product` and published OpenAPI `POST /api/v1/b2b/events`, checks `X-Service-Key`, stores event idempotency keys, and batch-updates matching `cart_items.unavailable_reason` to `PRODUCT_BLOCKED`, `PRODUCT_DELETED`, or `OUT_OF_STOCK`. Orders and `order_items` are not changed.

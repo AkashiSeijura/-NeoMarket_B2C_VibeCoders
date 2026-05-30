@@ -6,12 +6,23 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy.orm import Session
 
-from src.api.deps import get_jwt_user_id
+from src.api.deps import get_jwt_user_id, require_service_key
 from src.db.session import get_db
-from src.schemas.order import OrderCreateRequest, OrderResponse, PaginatedOrders
+from src.schemas.order import (
+    OrderCreateRequest,
+    OrderResponse,
+    OrderStatusUpdateRequest,
+    PaginatedOrders,
+)
 from src.services.b2b_client import B2BClient, get_b2b_client
 from src.services.errors import EmptyOrderError, IdempotencyConflictError
-from src.services.order_service import cancel_order, checkout, get_order, list_orders
+from src.services.order_service import (
+    cancel_order,
+    checkout,
+    get_order,
+    list_orders,
+    transition_order_status,
+)
 
 router = APIRouter(prefix="/api/v1/orders", tags=["Orders"])
 
@@ -70,3 +81,19 @@ def cancel_order_endpoint(
     b2b_client: B2BClient = Depends(get_b2b_client),
 ) -> OrderResponse:
     return cancel_order(db, user_id, order_id, b2b_client)
+
+
+@router.post(
+    "/{order_id}/status",
+    response_model=OrderResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def update_order_status_endpoint(
+    order_id: uuid.UUID,
+    payload: OrderStatusUpdateRequest,
+    _: None = Depends(require_service_key),
+    db: Session = Depends(get_db),
+    b2b_client: B2BClient = Depends(get_b2b_client),
+) -> OrderResponse:
+    return transition_order_status(db, order_id, payload.status, b2b_client)
