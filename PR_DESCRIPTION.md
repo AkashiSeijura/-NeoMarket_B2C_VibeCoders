@@ -1,3 +1,22 @@
+## US-CART-02
+
+Implemented product subscriptions on `POST /api/v1/favorites/{product_id}/subscribe` and `DELETE /api/v1/favorites/{product_id}/subscribe`. The buyer id is taken only from Bearer JWT `sub`; query/body user ids are not accepted. The endpoint validates `notify_on`, verifies the product through B2B before saving, returns `201` with `notify_on` on success, `409 DUPLICATE_SUBSCRIPTION` for the same buyer/product, `400 INVALID_NOTIFY_ON` for empty or unsupported events, and `404` for unknown products. Published B2C OpenAPI currently exposes the same route with request field `events` and `204`; the implementation accepts `events` as a compatibility alias but returns the flow/DoD response shape with `notify_on`.
+
+## ADR: product subscription storage
+
+I considered PostgreSQL `ArrayField`, a separate subscription-event table, and a JSON field on the subscription row. I chose a JSON `notify_on` field because it is portable across the current SQLite test setup and the service database, and adding a new notification type does not require a schema migration. A separate event table would make filtering by event type simpler and more index-friendly, but it adds joins and extra write paths before notification dispatch exists. `ArrayField` is compact and filterable in PostgreSQL, but ties the model to one database backend and complicates local tests.
+
+## Test evidence: US-CART-02
+
+`python -m pytest -q`
+
+- `test_subscribe_returns_201_with_notify_on`: passed
+- `test_duplicate_subscription_returns_409`: passed
+- `test_invalid_notify_on_returns_400`: passed
+- `test_subscribe_to_unknown_product_returns_404`: passed
+- `test_unsubscribe_returns_204`: passed
+- full B2C suite: 53 passed
+
 ## US-CART-03
 
 Implemented B2C cart storage for guest (`X-Session-Id`) and authorized users (`Authorization: Bearer <JWT>` with `sub`, plus `X-User-Id` gateway fallback). Cart CRUD enriches every read from B2B and never stores price, stock, or `unavailable_reason`. Guest merge uses `MAX(guest.quantity, auth.quantity)` on SKU conflicts.

@@ -104,3 +104,92 @@ def test_user_id_from_query_is_ignored(client, fake_b2b):
     body = response.json()
     assert body["total_count"] == 1
     assert body["items"][0]["id"] == str(attacker_product_id)
+
+
+def test_subscribe_returns_201_with_notify_on(client, fake_b2b):
+    product_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    fake_b2b.catalog_products.append(_product(product_id))
+
+    response = client.post(
+        f"/api/v1/favorites/{product_id}/subscribe",
+        json={"notify_on": ["BACK_IN_STOCK"]},
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["product_id"] == str(product_id)
+    assert body["notify_on"] == ["BACK_IN_STOCK"]
+
+
+def test_duplicate_subscription_returns_409(client, fake_b2b):
+    product_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    fake_b2b.catalog_products.append(_product(product_id))
+    headers = auth_headers(user_id)
+
+    client.post(
+        f"/api/v1/favorites/{product_id}/subscribe",
+        json={"notify_on": ["BACK_IN_STOCK"]},
+        headers=headers,
+    )
+    response = client.post(
+        f"/api/v1/favorites/{product_id}/subscribe",
+        json={"notify_on": ["BACK_IN_STOCK"]},
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "DUPLICATE_SUBSCRIPTION"
+
+
+def test_invalid_notify_on_returns_400(client, fake_b2b):
+    product_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    fake_b2b.catalog_products.append(_product(product_id))
+
+    empty_response = client.post(
+        f"/api/v1/favorites/{product_id}/subscribe",
+        json={"notify_on": []},
+        headers=auth_headers(user_id),
+    )
+    invalid_response = client.post(
+        f"/api/v1/favorites/{product_id}/subscribe",
+        json={"notify_on": ["SMS"]},
+        headers=auth_headers(user_id),
+    )
+
+    assert empty_response.status_code == 400
+    assert empty_response.json()["code"] == "INVALID_NOTIFY_ON"
+    assert invalid_response.status_code == 400
+    assert invalid_response.json()["code"] == "INVALID_NOTIFY_ON"
+
+
+def test_unsubscribe_returns_204(client, fake_b2b):
+    product_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    fake_b2b.catalog_products.append(_product(product_id))
+    headers = auth_headers(user_id)
+
+    client.post(
+        f"/api/v1/favorites/{product_id}/subscribe",
+        json={"notify_on": ["BACK_IN_STOCK"]},
+        headers=headers,
+    )
+    response = client.delete(f"/api/v1/favorites/{product_id}/subscribe", headers=headers)
+
+    assert response.status_code == 204
+
+
+def test_subscribe_to_unknown_product_returns_404(client, fake_b2b):
+    product_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+
+    response = client.post(
+        f"/api/v1/favorites/{product_id}/subscribe",
+        json={"notify_on": ["BACK_IN_STOCK"]},
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 404
