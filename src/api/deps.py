@@ -6,6 +6,7 @@ import uuid
 
 from fastapi import Header
 
+from src.core.config import settings
 from src.services.cart_service import CartIdentity
 from src.services.errors import MissingCartIdentityError, UnauthorizedError
 
@@ -52,6 +53,11 @@ def get_required_session_id(x_session_id: str | None = Header(default=None, alia
     if not x_session_id:
         raise MissingCartIdentityError("Pass X-Session-Id")
     return str(_parse_uuid(x_session_id))
+
+
+def require_service_key(x_service_key: str | None = Header(default=None, alias="X-Service-Key")) -> None:
+    if x_service_key != settings.b2b_to_b2c_key:
+        raise UnauthorizedError("Missing or invalid service key")
 
 
 def _user_id_from_authorization(authorization: str | None) -> uuid.UUID | None:

@@ -240,10 +240,10 @@ def _to_read_model(item: CartItem, sku: B2BSku | None) -> CartItemRead:
             line_total=0,
             is_available=False,
             available=False,
-            unavailable_reason="PRODUCT_DELETED",
+            unavailable_reason=item.unavailable_reason or "PRODUCT_DELETED",
         )
 
-    unavailable_reason = _unavailable_reason(sku)
+    unavailable_reason = item.unavailable_reason or _unavailable_reason(sku)
     is_available = unavailable_reason is None
     line_total = sku.unit_price * item.quantity if is_available else 0
     image = ImageRef(url=sku.image_url) if sku.image_url else None

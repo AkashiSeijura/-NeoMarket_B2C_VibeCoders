@@ -1,3 +1,24 @@
+## US-ORD-04
+
+Implemented incoming B2B product events. The service accepts flow-compatible `POST /api/v1/events/product` and published OpenAPI `POST /api/v1/b2b/events`, checks `X-Service-Key`, stores event idempotency keys, and batch-updates matching `cart_items.unavailable_reason` to `PRODUCT_BLOCKED`, `PRODUCT_DELETED`, or `OUT_OF_STOCK`. Orders and `order_items` are not changed.
+
+Contract check: `flows/b2c-orders-flows.md#b2c-12-handle-events` defines `/api/v1/events/product` with `event`, `sku_ids`, and `date`; published B2C OpenAPI defines `/api/v1/b2b/events` with `event_type`, `occurred_at`, and `payload`. Because OpenAPI has priority on conflicts but the executable flow requires `/events/product`, the implementation supports both formats through one handler.
+
+## ADR: event idempotency
+
+I considered a separate `EventIdempotencyKey` table, storing the last event key on `cart_items`, and Redis with TTL. I chose a separate DB table because it is durable, simple to query before applying side effects, and avoids coupling idempotency to rows that may not exist for every affected buyer. A `cart_items` field would miss events when no cart row exists yet and cannot represent one event affecting many rows cleanly. Redis with TTL is fast and self-cleaning, but risks losing idempotency on cache flush/restart; with the table, disk growth is the main tradeoff and old keys can be cleaned by age with a simple scheduled delete.
+
+## Test evidence: US-ORD-04
+
+`python -m pytest -q`
+
+- `test_product_blocked_marks_cart_items_unavailable`: passed
+- `test_orders_not_affected_by_product_blocked`: passed
+- `test_idempotent_event_no_side_effects`: passed
+- `test_missing_service_key_returns_401`: passed
+- `test_openapi_b2b_events_endpoint_accepts_product_event`: passed
+- full B2C suite: 70 passed
+
 ## US-ORD-02
 
 Implemented `GET /api/v1/orders` with `limit`, `offset`, and `status` filtering, plus `GET /api/v1/orders/{order_id}`. Buyer identity for order endpoints now comes only from Bearer JWT `sub`; `X-User-Id` is not accepted for orders. Order detail uses persisted `OrderItem.unit_price`, `product_title`, and `sku_name`, so later B2B SKU price changes do not affect historical orders. Contract check: published B2C OpenAPI defines `GET /api/v1/orders` as `PaginatedOrders` with `OrderResponse` items, while the flow shows a compact list with `items_count`; implementation follows OpenAPI priority.
