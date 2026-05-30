@@ -187,3 +187,22 @@ I considered three identity options: `user_id` from query, `user_id` from JWT cl
 - `test_blocked_product_excluded_from_list`: passed
 - `test_user_id_from_query_is_ignored`: passed
 - full B2C suite: 48 passed
+
+## US-CART-04
+
+Implemented home page banners with flow-compatible `GET /api/v1/home/banners`, OpenAPI-compatible `GET /api/v1/catalog/banners`, and public `POST /api/v1/banner-events` for batched `impression`/`click` CTR events. Active banners are filtered by `is_active`, `start_at`, `end_at`, sorted by ascending `priority`, and returned as an empty 200 slider when nothing is active. Unknown banner events return `400 BANNER_NOT_FOUND`; empty event batches return `400 EMPTY_EVENTS`.
+
+Published B2C OpenAPI exposes banners as `GET /api/v1/catalog/banners` returning an array with `ordering/active_from/active_to`; the canonical flow requires `GET /api/v1/home/banners` returning `{items,total_count}` with `priority`. The implementation supports both shapes: `/catalog/banners` follows OpenAPI, `/home/banners` follows the executable flow and DoD. Published B2C OpenAPI does not currently describe `POST /api/v1/banner-events`, so this service exposes it in its generated schema with the flow request/response shape.
+
+## ADR: banner click analytics
+
+I considered three storage options for CTR analytics: writing every event to a relational table, buffered batch writes, and sending events to an external analytics system. I chose relational row-per-event storage for this MVP because it is the simplest to operate in the current service and makes CTR aggregation straightforward with SQL over `banner_events`. The downside is higher DB write load on a high-traffic homepage, so buffered writes or an external analytics pipeline would be a better next step when traffic grows. For now the main criteria are low implementation complexity and simple aggregation by `banner_id/event`.
+
+## Test evidence: US-CART-04
+
+`python -m pytest -q`
+
+- `test_active_banners_returned_sorted_by_priority`: passed
+- `test_no_active_banners_returns_200_empty`: passed
+- `test_click_on_unknown_banner_returns_400`: passed
+- full B2C suite: 58 passed
