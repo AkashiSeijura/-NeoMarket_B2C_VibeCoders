@@ -27,9 +27,13 @@ class FakeB2BClient:
         self.fail_catalog = False
         self.fail_reserve_unavailable = False
         self.fail_unreserve_unavailable = False
+        self.fail_fulfill_unavailable = False
         self.reserve_failed_items: list[dict] = []
         self.reserve_calls: list[dict] = []
         self.unreserve_calls: list[dict] = []
+        self.fulfill_calls: list[dict] = []
+        self.fulfilled_order_ids: set[uuid.UUID] = set()
+        self.fulfill_side_effects = 0
         self.catalog_calls: list[list[tuple[str, str]]] = []
 
     def set_sku(
@@ -80,6 +84,16 @@ class FakeB2BClient:
             from src.services.errors import B2BUnavailableError
 
             raise B2BUnavailableError("B2B service unavailable")
+
+    def fulfill(self, order_id: uuid.UUID, items: list[dict]) -> None:
+        self.fulfill_calls.append({"order_id": order_id, "items": items})
+        if self.fail_fulfill_unavailable:
+            from src.services.errors import B2BUnavailableError
+
+            raise B2BUnavailableError("B2B service unavailable")
+        if order_id not in self.fulfilled_order_ids:
+            self.fulfilled_order_ids.add(order_id)
+            self.fulfill_side_effects += 1
 
     def fetch_catalog_products(self, params: list[tuple[str, str]]) -> dict:
         if self.fail_catalog:

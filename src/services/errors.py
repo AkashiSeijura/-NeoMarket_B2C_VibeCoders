@@ -154,3 +154,20 @@ class CancelNotAllowedError(ServiceError):
 
     def to_dict(self) -> dict:
         return {**super().to_dict(), "current_status": self.current_status}
+
+
+class OrderStatusTransitionError(ServiceError):
+    status_code = 409
+    code = "ORDER_STATUS_TRANSITION_NOT_ALLOWED"
+
+    def __init__(self, current_status: str, requested_status: str):
+        self.current_status = current_status
+        self.requested_status = requested_status
+        super().__init__(f"Cannot transition order from {current_status} to {requested_status}")
+
+    def to_dict(self) -> dict:
+        return {
+            **super().to_dict(),
+            "current_status": self.current_status,
+            "requested_status": self.requested_status,
+        }

@@ -27,6 +27,7 @@ from src.services.errors import (
     CancelNotAllowedError,
     EmptyOrderError,
     IdempotencyConflictError,
+    OrderStatusTransitionError,
     OrderNotFoundError,
     ReserveFailedError,
 )
@@ -34,6 +35,11 @@ from src.services.errors import (
 logger = logging.getLogger(__name__)
 
 ORDER_CANCELLABLE_STATUSES = {"CREATED", "PAID"}
+ORDER_STATUS_TRANSITIONS = {
+    "PAID": {"ASSEMBLING"},
+    "ASSEMBLING": {"DELIVERING"},
+    "DELIVERING": {"DELIVERED"},
+}
 
 
 def checkout(
@@ -140,6 +146,38 @@ def get_order(db: Session, buyer_id: uuid.UUID, order_id: uuid.UUID) -> OrderRes
     return _to_response(order)
 
 
+def transition_order_status(
+    db: Session,
+    order_id: uuid.UUID,
+    new_status: str,
+    b2b_client: B2BClient,
+) -> OrderResponse:
+    order = db.scalars(
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(Order.id == order_id)
+    ).first()
+    if order is None:
+        raise OrderNotFoundError("Order not found")
+
+    if order.status == new_status:
+        if new_status == "DELIVERED":
+            _fulfill_delivered_order(order, b2b_client)
+        return _to_response(order)
+
+    if new_status not in ORDER_STATUS_TRANSITIONS.get(order.status, set()):
+        raise OrderStatusTransitionError(order.status, new_status)
+
+    order.status = new_status
+    db.commit()
+    db.refresh(order)
+
+    if new_status == "DELIVERED":
+        _fulfill_delivered_order(order, b2b_client)
+
+    return _to_response(order)
+
+
 def retry_pending_cancellations(db: Session, b2b_client: B2BClient) -> int:
     orders = list(
         db.scalars(
@@ -164,6 +202,26 @@ def retry_pending_cancellations(db: Session, b2b_client: B2BClient) -> int:
     return cancelled_count
 
 
+def retry_delivered_fulfillments(db: Session, b2b_client: B2BClient) -> int:
+    orders = list(
+        db.scalars(
+            select(Order)
+            .options(selectinload(Order.items))
+            .where(Order.status == "DELIVERED")
+            .order_by(Order.updated_at, Order.id)
+        )
+    )
+    fulfilled_count = 0
+    for order in orders:
+        try:
+            _fulfill_order(order, b2b_client)
+        except Exception:
+            logger.exception("B2B fulfill retry failed for order %s", order.id)
+            continue
+        fulfilled_count += 1
+    return fulfilled_count
+
+
 def _get_user_order(db: Session, buyer_id: uuid.UUID, order_id: uuid.UUID) -> Order | None:
     return db.scalars(
         select(Order)
@@ -174,6 +232,20 @@ def _get_user_order(db: Session, buyer_id: uuid.UUID, order_id: uuid.UUID) -> Or
 
 def _unreserve_order(order: Order, b2b_client: B2BClient) -> None:
     b2b_client.unreserve(
+        order.id,
+        [{"sku_id": str(item.sku_id), "quantity": item.quantity} for item in order.items],
+    )
+
+
+def _fulfill_delivered_order(order: Order, b2b_client: B2BClient) -> None:
+    try:
+        _fulfill_order(order, b2b_client)
+    except Exception:
+        logger.exception("B2B fulfill failed for delivered order %s; retry required", order.id)
+
+
+def _fulfill_order(order: Order, b2b_client: B2BClient) -> None:
+    b2b_client.fulfill(
         order.id,
         [{"sku_id": str(item.sku_id), "quantity": item.quantity} for item in order.items],
     )
