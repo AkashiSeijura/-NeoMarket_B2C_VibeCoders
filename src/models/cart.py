@@ -33,6 +33,19 @@ class CartItem(TimestampMixin, Base):
     sku_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
     product_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unavailable_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class EventIdempotencyKey(TimestampMixin, Base):
+    __tablename__ = "event_idempotency_keys"
+    __table_args__ = (
+        Index("ix_event_idempotency_keys_event_type", "event_type"),
+        Index("ix_event_idempotency_keys_product_id", "product_id"),
+    )
+
+    idempotency_key: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    product_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
 
 
 class Favorite(Base):
