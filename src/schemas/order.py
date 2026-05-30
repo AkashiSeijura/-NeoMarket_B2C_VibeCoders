@@ -89,3 +89,10 @@ class OrderResponse(BaseModel):
     updated_at: datetime
     paid_at: datetime | None = None
     delivered_at: datetime | None = None
+
+
+class PaginatedOrders(BaseModel):
+    items: list[OrderResponse]
+    total_count: int
+    limit: int
+    offset: int

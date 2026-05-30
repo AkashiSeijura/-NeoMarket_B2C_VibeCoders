@@ -115,6 +115,97 @@ def test_b2b_unavailable_returns_503(client, fake_b2b):
     assert response.json()["code"] == "B2B_UNAVAILABLE"
 
 
+def test_orders_list_returns_own_orders_paginated(client, fake_b2b, db_session):
+    owner_id = uuid.uuid4()
+    other_id = uuid.uuid4()
+    paid_sku_1 = uuid.uuid4()
+    paid_sku_2 = uuid.uuid4()
+    delivered_sku = uuid.uuid4()
+    other_sku = uuid.uuid4()
+    for sku_id in [paid_sku_1, paid_sku_2, delivered_sku, other_sku]:
+        fake_b2b.set_sku(sku_id, active_quantity=5)
+
+    paid_1 = client.post(
+        "/api/v1/orders",
+        json=_order_payload(uuid.uuid4(), paid_sku_1, quantity=1),
+        headers=auth_headers(owner_id),
+    )
+    paid_2 = client.post(
+        "/api/v1/orders",
+        json=_order_payload(uuid.uuid4(), paid_sku_2, quantity=1),
+        headers=auth_headers(owner_id),
+    )
+    delivered = client.post(
+        "/api/v1/orders",
+        json=_order_payload(uuid.uuid4(), delivered_sku, quantity=1),
+        headers=auth_headers(owner_id),
+    )
+    other = client.post(
+        "/api/v1/orders",
+        json=_order_payload(uuid.uuid4(), other_sku, quantity=1),
+        headers=auth_headers(other_id),
+    )
+    delivered_order = db_session.get(Order, uuid.UUID(delivered.json()["id"]))
+    delivered_order.status = "DELIVERED"
+    db_session.commit()
+
+    response = client.get(
+        "/api/v1/orders?status=PAID&limit=1&offset=1",
+        headers=auth_headers(owner_id),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 2
+    assert body["limit"] == 1
+    assert body["offset"] == 1
+    assert len(body["items"]) == 1
+    assert body["items"][0]["id"] in {paid_1.json()["id"], paid_2.json()["id"]}
+    assert body["items"][0]["id"] != other.json()["id"]
+    assert body["items"][0]["status"] == "PAID"
+    assert body["items"][0]["items"][0]["unit_price"] == 1000
+
+
+def test_order_detail_shows_fixed_prices(client, fake_b2b):
+    user_id = uuid.uuid4()
+    sku_id = uuid.uuid4()
+    idempotency_key = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, unit_price=5000, active_quantity=5)
+    created = client.post(
+        "/api/v1/orders",
+        json=_order_payload(idempotency_key, sku_id, quantity=2),
+        headers=auth_headers(user_id),
+    )
+    fake_b2b.set_sku(sku_id, unit_price=9999, active_quantity=5)
+
+    response = client.get(f"/api/v1/orders/{created.json()['id']}", headers=auth_headers(user_id))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == created.json()["id"]
+    assert body["items"][0]["unit_price"] == 5000
+    assert body["items"][0]["line_total"] == 10000
+    assert body["total_amount"] == 10000
+
+
+def test_other_user_order_returns_404_not_403(client, fake_b2b):
+    owner_id = uuid.uuid4()
+    other_id = uuid.uuid4()
+    sku_id = uuid.uuid4()
+    idempotency_key = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+    created = client.post(
+        "/api/v1/orders",
+        json=_order_payload(idempotency_key, sku_id, quantity=1),
+        headers=auth_headers(owner_id),
+    )
+
+    response = client.get(f"/api/v1/orders/{created.json()['id']}", headers=auth_headers(other_id))
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "ORDER_NOT_FOUND"
+
+
 def test_cancel_paid_order_transitions_to_cancelled(client, fake_b2b, db_session):
     user_id = uuid.uuid4()
     sku_id = uuid.uuid4()

@@ -1,3 +1,20 @@
+## US-ORD-02
+
+Implemented `GET /api/v1/orders` with `limit`, `offset`, and `status` filtering, plus `GET /api/v1/orders/{order_id}`. Buyer identity for order endpoints now comes only from Bearer JWT `sub`; `X-User-Id` is not accepted for orders. Order detail uses persisted `OrderItem.unit_price`, `product_title`, and `sku_name`, so later B2B SKU price changes do not affect historical orders. Contract check: published B2C OpenAPI defines `GET /api/v1/orders` as `PaginatedOrders` with `OrderResponse` items, while the flow shows a compact list with `items_count`; implementation follows OpenAPI priority.
+
+## ADR: order IDOR protection
+
+I considered `filter(buyer_id=request.user).get(id=...)`, loading by `id` first and checking owner separately, and moving ownership into a reusable permission/dependency layer. I chose the scoped query (`WHERE id = :id AND buyer_id = jwt.sub`) because it is readable at the service boundary and naturally returns the same `ORDER_NOT_FOUND` for missing and foreign orders. Loading first then checking owner makes it easier to accidentally return 403 or leak existence through logging/branching. A permission class could reduce repetition later, but this service has only a few order endpoints and the scoped query keeps the unexpected absence behavior explicit.
+
+## Test evidence: US-ORD-02
+
+`python -m pytest -q`
+
+- `test_orders_list_returns_own_orders_paginated`: passed
+- `test_order_detail_shows_fixed_prices`: passed
+- `test_other_user_order_returns_404_not_403`: passed
+- full B2C suite: 65 passed
+
 ## US-CART-02
 
 Implemented product subscriptions on `POST /api/v1/favorites/{product_id}/subscribe` and `DELETE /api/v1/favorites/{product_id}/subscribe`. The buyer id is taken only from Bearer JWT `sub`; query/body user ids are not accepted. The endpoint validates `notify_on`, verifies the product through B2B before saving, returns `201` with `notify_on` on success, `409 DUPLICATE_SUBSCRIPTION` for the same buyer/product, `400 INVALID_NOTIFY_ON` for empty or unsupported events, and `404` for unknown products. Published B2C OpenAPI currently exposes the same route with request field `events` and `204`; the implementation accepts `events` as a compatibility alias but returns the flow/DoD response shape with `notify_on`.

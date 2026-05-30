@@ -5,7 +5,7 @@ import json
 import logging
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -18,6 +18,7 @@ from src.schemas.order import (
     OrderRequestItem,
     OrderResponse,
     PaymentMethodResponse,
+    PaginatedOrders,
 )
 from src.services.b2b_client import B2BClient, B2BSku
 from src.services.errors import (
@@ -98,6 +99,44 @@ def cancel_order(
 
     db.commit()
     db.refresh(order)
+    return _to_response(order)
+
+
+def list_orders(
+    db: Session,
+    buyer_id: uuid.UUID,
+    *,
+    limit: int,
+    offset: int,
+    status: str | None = None,
+) -> PaginatedOrders:
+    filters = [Order.buyer_id == buyer_id]
+    if status is not None:
+        filters.append(Order.status == status)
+
+    total_count = db.scalar(select(func.count()).select_from(Order).where(*filters)) or 0
+    orders = list(
+        db.scalars(
+            select(Order)
+            .options(selectinload(Order.items))
+            .where(*filters)
+            .order_by(Order.created_at.desc(), Order.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    )
+    return PaginatedOrders(
+        items=[_to_response(order) for order in orders],
+        total_count=total_count,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def get_order(db: Session, buyer_id: uuid.UUID, order_id: uuid.UUID) -> OrderResponse:
+    order = _get_user_order(db, buyer_id, order_id)
+    if order is None:
+        raise OrderNotFoundError("Order not found")
     return _to_response(order)
 
 
