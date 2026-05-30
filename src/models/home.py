@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.db.base import Base
@@ -45,3 +45,34 @@ class BannerEvent(Base):
     event: Mapped[str] = mapped_column(String(20), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Collection(TimestampMixin, Base):
+    __tablename__ = "collections"
+    __table_args__ = (
+        Index("ix_collections_active_start_priority", "is_active", "start_date", "priority"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cover_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    target_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class CollectionProduct(Base):
+    __tablename__ = "collection_products"
+    __table_args__ = (
+        Index("ix_collection_products_collection_ordering", "collection_id", "ordering"),
+    )
+
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("collections.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True)
+    ordering: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

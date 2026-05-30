@@ -222,6 +222,14 @@ def get_similar_catalog_products(
     return [CatalogProductCard.model_validate(_normalize_catalog_item(product)) for product in products[:normalized_limit]]
 
 
+def normalize_catalog_product_card(product: dict) -> dict:
+    return _normalize_catalog_item(product)
+
+
+def is_hidden_catalog_product(product: dict) -> bool:
+    return _is_hidden_product(product)
+
+
 def _validate_sort(sort: str) -> None:
     if sort not in ALLOWED_SORTS:
         raise InvalidSortError(f"Invalid sort parameter. Allowed values: {', '.join(ALLOWED_SORTS)}")
