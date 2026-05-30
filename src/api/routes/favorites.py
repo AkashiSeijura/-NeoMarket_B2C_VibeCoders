@@ -8,9 +8,16 @@ from sqlalchemy.orm import Session
 from src.api.deps import get_jwt_user_id
 from src.db.session import get_db
 from src.schemas.catalog import PaginatedCatalogProducts
-from src.schemas.favorites import FavoriteResponse
+from src.schemas.favorites import FavoriteResponse, ProductSubscriptionRequest, ProductSubscriptionResponse
 from src.services.b2b_client import B2BClient, get_b2b_client
-from src.services.favorite_service import add_favorite, delete_favorite, list_favorites, put_favorite
+from src.services.favorite_service import (
+    add_favorite,
+    delete_favorite,
+    list_favorites,
+    put_favorite,
+    subscribe_to_product,
+    unsubscribe_from_product,
+)
 
 router = APIRouter(prefix="/api/v1/favorites", tags=["Favorites"])
 
@@ -57,4 +64,40 @@ def delete_favorite_endpoint(
     db: Session = Depends(get_db),
 ) -> Response:
     delete_favorite(db, user_id, product_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{product_id}/subscribe",
+    response_model=ProductSubscriptionResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"description": "Invalid notify_on"},
+        404: {"description": "Product not found"},
+        409: {"description": "Subscription already exists"},
+    },
+)
+def subscribe_to_product_endpoint(
+    product_id: uuid.UUID,
+    payload: ProductSubscriptionRequest | None = None,
+    user_id: uuid.UUID = Depends(get_jwt_user_id),
+    db: Session = Depends(get_db),
+    b2b_client: B2BClient = Depends(get_b2b_client),
+) -> ProductSubscriptionResponse:
+    if payload is None:
+        notify_on = None
+    elif payload.notify_on is not None:
+        notify_on = payload.notify_on
+    else:
+        notify_on = payload.events
+    return subscribe_to_product(db, user_id, product_id, notify_on, b2b_client)
+
+
+@router.delete("/{product_id}/subscribe", status_code=status.HTTP_204_NO_CONTENT)
+def unsubscribe_from_product_endpoint(
+    product_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_jwt_user_id),
+    db: Session = Depends(get_db),
+) -> Response:
+    unsubscribe_from_product(db, user_id, product_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

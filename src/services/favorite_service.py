@@ -5,12 +5,16 @@ import uuid
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from src.models.cart import Favorite
+from src.models.cart import Favorite, ProductSubscription
 from src.schemas.catalog import CatalogProductCard, PaginatedCatalogProducts
-from src.schemas.favorites import FavoriteResponse
+from src.schemas.favorites import FavoriteResponse, ProductSubscriptionResponse
 from src.services.b2b_client import B2BClient
 from src.services.catalog_service import _normalize_catalog_item
-from src.services.errors import NotFoundError
+from src.services.errors import DuplicateSubscriptionError, InvalidNotifyOnError, NotFoundError
+
+
+ALLOWED_NOTIFY_ON = frozenset({"BACK_IN_STOCK", "PRICE_DROP"})
+DEFAULT_NOTIFY_ON = ["BACK_IN_STOCK"]
 
 
 def add_favorite(
@@ -37,6 +41,39 @@ def put_favorite(db: Session, user_id: uuid.UUID, product_id: uuid.UUID, b2b_cli
 
 def delete_favorite(db: Session, user_id: uuid.UUID, product_id: uuid.UUID) -> None:
     db.execute(delete(Favorite).where(Favorite.user_id == user_id, Favorite.product_id == product_id))
+    db.commit()
+
+
+def subscribe_to_product(
+    db: Session,
+    user_id: uuid.UUID,
+    product_id: uuid.UUID,
+    notify_on: list[str] | None,
+    b2b_client: B2BClient,
+) -> ProductSubscriptionResponse:
+    _require_visible_product(b2b_client, product_id)
+    normalized_notify_on = _normalize_notify_on(notify_on)
+    if _find_subscription(db, user_id, product_id) is not None:
+        raise DuplicateSubscriptionError("Subscription already exists")
+
+    subscription = ProductSubscription(
+        user_id=user_id,
+        product_id=product_id,
+        notify_on=normalized_notify_on,
+    )
+    db.add(subscription)
+    db.commit()
+    db.refresh(subscription)
+    return ProductSubscriptionResponse.model_validate(subscription)
+
+
+def unsubscribe_from_product(db: Session, user_id: uuid.UUID, product_id: uuid.UUID) -> None:
+    db.execute(
+        delete(ProductSubscription).where(
+            ProductSubscription.user_id == user_id,
+            ProductSubscription.product_id == product_id,
+        )
+    )
     db.commit()
 
 
@@ -79,6 +116,30 @@ def list_favorites(
 
 def _find_favorite(db: Session, user_id: uuid.UUID, product_id: uuid.UUID) -> Favorite | None:
     return db.scalars(select(Favorite).where(Favorite.user_id == user_id, Favorite.product_id == product_id)).first()
+
+
+def _find_subscription(db: Session, user_id: uuid.UUID, product_id: uuid.UUID) -> ProductSubscription | None:
+    return db.scalars(
+        select(ProductSubscription).where(
+            ProductSubscription.user_id == user_id,
+            ProductSubscription.product_id == product_id,
+        )
+    ).first()
+
+
+def _normalize_notify_on(notify_on: list[str] | None) -> list[str]:
+    values = notify_on if notify_on is not None else DEFAULT_NOTIFY_ON
+    if not values:
+        raise InvalidNotifyOnError("notify_on must contain at least one event")
+
+    normalized = []
+    for value in values:
+        event = str(value).strip().upper()
+        if event not in ALLOWED_NOTIFY_ON:
+            raise InvalidNotifyOnError("notify_on contains unsupported event")
+        if event not in normalized:
+            normalized.append(event)
+    return normalized
 
 
 def _require_visible_product(b2b_client: B2BClient, product_id: uuid.UUID) -> dict:

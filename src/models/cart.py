@@ -4,7 +4,7 @@ import uuid
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Index, Integer, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, Index, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.db.base import Base
@@ -47,3 +47,17 @@ class Favorite(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
     product_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class ProductSubscription(TimestampMixin, Base):
+    __tablename__ = "product_subscriptions"
+    __table_args__ = (
+        Index("ix_product_subscriptions_user_id", "user_id"),
+        Index("ix_product_subscriptions_product_id", "product_id"),
+        UniqueConstraint("user_id", "product_id", name="uq_product_subscriptions_user_product"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
+    product_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
+    notify_on: Mapped[list[str]] = mapped_column(JSON, nullable=False)

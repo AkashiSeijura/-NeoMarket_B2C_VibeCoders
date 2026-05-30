@@ -52,6 +52,26 @@ class InvalidQuantityError(ServiceError):
     code = "INVALID_QUANTITY"
 
 
+class InvalidNotifyOnError(ServiceError):
+    status_code = 400
+    code = "INVALID_NOTIFY_ON"
+
+
+class DuplicateSubscriptionError(ServiceError):
+    status_code = 409
+    code = "DUPLICATE_SUBSCRIPTION"
+
+
+class BannerNotFoundError(ServiceError):
+    status_code = 400
+    code = "BANNER_NOT_FOUND"
+
+
+class EmptyEventsError(ServiceError):
+    status_code = 400
+    code = "EMPTY_EVENTS"
+
+
 class InvalidSortError(ServiceError):
     status_code = 400
     code = "INVALID_SORT"
