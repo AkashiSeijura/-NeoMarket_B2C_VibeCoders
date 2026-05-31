@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy.orm import Session
 
-from src.api.deps import _user_id_from_authorization
+from src.api.deps import _user_id_from_jwt_authorization
 from src.db.session import get_db
 from src.schemas.home import (
     BannerEventsRequest,
@@ -77,6 +77,6 @@ def banner_events_endpoint(
     db: Session = Depends(get_db),
     authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> BannerEventsResponse:
-    user_id: uuid.UUID | None = _user_id_from_authorization(authorization) if authorization else None
+    user_id: uuid.UUID | None = _user_id_from_jwt_authorization(authorization) if authorization else None
     accepted_count = record_banner_events(db, payload.events, user_id=user_id)
     return BannerEventsResponse(accepted_count=accepted_count)

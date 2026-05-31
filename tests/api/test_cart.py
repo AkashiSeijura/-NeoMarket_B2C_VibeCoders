@@ -146,6 +146,20 @@ def test_merge_requires_session_header(client, fake_b2b):
     assert "X-Session-Id" in response.json()["message"]
 
 
+def test_cart_rejects_x_user_id_identity(client, fake_b2b):
+    sku_id = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+
+    response = client.post(
+        "/api/v1/cart/items",
+        json={"sku_id": str(sku_id), "quantity": 1},
+        headers={"X-User-Id": str(uuid.uuid4())},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "MISSING_CART_IDENTITY"
+
+
 def test_cart_validate_returns_issues(client, fake_b2b):
     sku_id = uuid.uuid4()
     fake_b2b.set_sku(sku_id, unit_price=15000, active_quantity=1)

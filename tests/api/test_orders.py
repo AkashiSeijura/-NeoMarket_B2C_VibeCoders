@@ -270,6 +270,27 @@ def test_cancel_paid_order_transitions_to_cancelled(client, fake_b2b, db_session
     ]
 
 
+def test_cancel_requires_jwt_not_x_user_id(client, fake_b2b):
+    user_id = uuid.uuid4()
+    sku_id = uuid.uuid4()
+    idempotency_key = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+    created = client.post(
+        "/api/v1/orders",
+        json=_order_payload(idempotency_key, sku_id, quantity=1),
+        headers=auth_headers(user_id),
+    )
+
+    response = client.post(
+        f"/api/v1/orders/{created.json()['id']}/cancel",
+        headers={"X-User-Id": str(user_id)},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHORIZED"
+    assert fake_b2b.unreserve_calls == []
+
+
 def test_unreserve_failure_transitions_to_cancel_pending(client, fake_b2b, db_session):
     user_id = uuid.uuid4()
     sku_id = uuid.uuid4()
