@@ -288,8 +288,8 @@ def _request_hash(
     raw = {
         "buyer_id": str(buyer_id),
         "idempotency_key": str(idempotency_key),
-        "address_id": str(payload.address_id) if payload.address_id else None,
-        "payment_method_id": str(payload.payment_method_id) if payload.payment_method_id else None,
+        "address_id": str(payload.address_id),
+        "payment_method_id": str(payload.payment_method_id),
         "delivery_address": payload.delivery_address,
         "comment": payload.comment,
         "items": [
@@ -389,7 +389,6 @@ def _build_order(
 
 
 def _to_response(order: Order) -> OrderResponse:
-    address_id = order.address_id or order.id
     return OrderResponse(
         id=order.id,
         number=f"NM-{str(order.id)[:8]}",
@@ -415,7 +414,7 @@ def _to_response(order: Order) -> OrderResponse:
         total=order.total,
         delivery_cost=order.delivery_cost,
         address=AddressResponse(
-            id=address_id,
+            id=order.address_id,
             comment=order.delivery_address,
             created_at=order.created_at,
         ),
@@ -428,7 +427,5 @@ def _to_response(order: Order) -> OrderResponse:
     )
 
 
-def _payment_method(order: Order) -> PaymentMethodResponse | None:
-    if order.payment_method_id is None:
-        return None
+def _payment_method(order: Order) -> PaymentMethodResponse:
     return PaymentMethodResponse(id=order.payment_method_id, created_at=order.created_at)

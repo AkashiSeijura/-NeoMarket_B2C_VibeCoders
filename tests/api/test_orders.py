@@ -10,6 +10,8 @@ from tests.conftest import auth_headers
 
 def _order_payload(idempotency_key: uuid.UUID, sku_id: uuid.UUID, quantity: int = 2) -> dict:
     return {
+        "address_id": str(uuid.uuid4()),
+        "payment_method_id": str(uuid.uuid4()),
         "idempotency_key": str(idempotency_key),
         "items": [{"sku_id": str(sku_id), "quantity": quantity}],
         "delivery_address": "Yekaterinburg, Mira 19",
@@ -41,6 +43,8 @@ def test_checkout_creates_paid_order_with_fixed_prices(client, fake_b2b, db_sess
     assert body["status"] == "PAID"
     assert body["buyer_id"] == str(user_id)
     assert body["total_amount"] == 25998000
+    assert body["address"]["id"]
+    assert body["payment_method"]["id"]
     item = body["items"][0]
     assert item["sku_id"] == str(sku_id)
     assert item["product_id"] == str(product_id)
@@ -66,6 +70,8 @@ def test_partial_reserve_failure_returns_409(client, fake_b2b, db_session):
     response = client.post(
         "/api/v1/orders",
         json={
+            "address_id": str(uuid.uuid4()),
+            "payment_method_id": str(uuid.uuid4()),
             "idempotency_key": str(idempotency_key),
             "items": [
                 {"sku_id": str(sku_ok), "quantity": 1},
@@ -115,6 +121,37 @@ def test_b2b_unavailable_returns_503(client, fake_b2b):
 
     assert response.status_code == 503
     assert response.json()["code"] == "B2B_UNAVAILABLE"
+
+
+def test_checkout_requires_jwt_not_x_user_id(client, fake_b2b):
+    sku_id = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+
+    response = client.post(
+        "/api/v1/orders",
+        json=_order_payload(uuid.uuid4(), sku_id, quantity=1),
+        headers={"X-User-Id": str(uuid.uuid4())},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHORIZED"
+
+
+def test_checkout_requires_address_and_payment_method(client, fake_b2b):
+    sku_id = uuid.uuid4()
+    fake_b2b.set_sku(sku_id, active_quantity=5)
+
+    response = client.post(
+        "/api/v1/orders",
+        json={
+            "idempotency_key": str(uuid.uuid4()),
+            "items": [{"sku_id": str(sku_id), "quantity": 1}],
+        },
+        headers=auth_headers(uuid.uuid4()),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "VALIDATION_ERROR"
 
 
 def test_orders_list_returns_own_orders_paginated(client, fake_b2b, db_session):
