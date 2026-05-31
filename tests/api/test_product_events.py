@@ -25,6 +25,8 @@ def _event_payload(idempotency_key: uuid.UUID, product_id: uuid.UUID, sku_ids: l
 
 def _order_payload(idempotency_key: uuid.UUID, sku_id: uuid.UUID) -> dict:
     return {
+        "address_id": str(uuid.uuid4()),
+        "payment_method_id": str(uuid.uuid4()),
         "idempotency_key": str(idempotency_key),
         "items": [{"sku_id": str(sku_id), "quantity": 1}],
         "delivery_address": "Yekaterinburg, Mira 19",

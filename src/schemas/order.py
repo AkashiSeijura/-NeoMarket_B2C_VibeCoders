@@ -14,8 +14,8 @@ class OrderRequestItem(BaseModel):
 
 
 class OrderCreateRequest(BaseModel):
-    address_id: uuid.UUID | None = None
-    payment_method_id: uuid.UUID | None = None
+    address_id: uuid.UUID
+    payment_method_id: uuid.UUID
     comment: str | None = Field(default=None, max_length=1000)
     items_snapshot: list[OrderRequestItem] | None = None
     idempotency_key: uuid.UUID | None = None
@@ -86,7 +86,7 @@ class OrderResponse(BaseModel):
     total: int
     delivery_cost: int = 0
     address: AddressResponse
-    payment_method: PaymentMethodResponse | None = None
+    payment_method: PaymentMethodResponse
     delivery_address: str | None = None
     comment: str | None = None
     cancel_reason: str | None = None

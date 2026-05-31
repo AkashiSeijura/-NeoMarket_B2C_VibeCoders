@@ -28,8 +28,8 @@ class Order(TimestampMixin, Base):
     subtotal: Mapped[int] = mapped_column(Integer, nullable=False)
     delivery_cost: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total: Mapped[int] = mapped_column(Integer, nullable=False)
-    address_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
-    payment_method_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
+    address_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
+    payment_method_id: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
     delivery_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
 

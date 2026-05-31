@@ -30,11 +30,8 @@ def get_cart_identity(
 
 def get_required_user_id(
     authorization: str | None = Header(default=None, alias="Authorization"),
-    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
 ) -> uuid.UUID:
-    user_id = _user_id_from_authorization(authorization) if authorization else None
-    if user_id is None and x_user_id:
-        user_id = _parse_uuid(x_user_id)
+    user_id = _user_id_from_jwt_authorization(authorization)
     if user_id is None:
         raise UnauthorizedError("Missing or invalid user identity")
     return user_id
