@@ -13,19 +13,16 @@ from src.services.errors import MissingCartIdentityError, UnauthorizedError
 
 def get_cart_identity(
     authorization: str | None = Header(default=None, alias="Authorization"),
-    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
     x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
 ) -> CartIdentity:
-    user_id = _user_id_from_authorization(authorization) if authorization else None
-    if user_id is None and x_user_id:
-        user_id = _parse_uuid(x_user_id)
+    user_id = _user_id_from_jwt_authorization(authorization) if authorization else None
     if user_id is not None:
         return CartIdentity(user_id=user_id)
 
     if x_session_id:
         return CartIdentity(session_id=str(_parse_uuid(x_session_id)))
 
-    raise MissingCartIdentityError("Pass Authorization, X-User-Id, or X-Session-Id")
+    raise MissingCartIdentityError("Pass Authorization or X-Session-Id")
 
 
 def get_required_user_id(
@@ -55,32 +52,6 @@ def get_required_session_id(x_session_id: str | None = Header(default=None, alia
 def require_service_key(x_service_key: str | None = Header(default=None, alias="X-Service-Key")) -> None:
     if x_service_key != settings.b2b_to_b2c_key:
         raise UnauthorizedError("Missing or invalid service key")
-
-
-def _user_id_from_authorization(authorization: str | None) -> uuid.UUID | None:
-    if not authorization:
-        return None
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise UnauthorizedError("Invalid Authorization header")
-
-    direct_uuid = _try_uuid(token)
-    if direct_uuid is not None:
-        return direct_uuid
-
-    parts = token.split(".")
-    if len(parts) < 2:
-        raise UnauthorizedError("Invalid JWT")
-    try:
-        payload = json.loads(_b64url_decode(parts[1]))
-    except (ValueError, json.JSONDecodeError) as exc:
-        raise UnauthorizedError("Invalid JWT") from exc
-
-    sub = payload.get("sub")
-    user_id = _try_uuid(sub)
-    if user_id is None:
-        raise UnauthorizedError("JWT sub must be a UUID")
-    return user_id
 
 
 def _user_id_from_jwt_authorization(authorization: str | None) -> uuid.UUID | None:
