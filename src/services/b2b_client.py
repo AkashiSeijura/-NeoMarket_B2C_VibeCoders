@@ -95,7 +95,7 @@ class B2BClient:
         payload = {"idempotency_key": str(idempotency_key), "items": items}
         try:
             with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(f"{self.base_url}/api/v1/reserve", json=payload, headers=headers)
+                response = client.post(f"{self.base_url}/api/v1/inventory/reserve", json=payload, headers=headers)
         except httpx.HTTPError as exc:
             raise B2BUnavailableError("B2B service unavailable") from exc
 
@@ -115,7 +115,7 @@ class B2BClient:
         payload = {"order_id": str(order_id), "items": items}
         try:
             with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(f"{self.base_url}/api/v1/unreserve", json=payload, headers=headers)
+                response = client.post(f"{self.base_url}/api/v1/inventory/unreserve", json=payload, headers=headers)
         except httpx.HTTPError as exc:
             raise B2BUnavailableError("B2B service unavailable") from exc
 
